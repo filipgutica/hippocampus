@@ -1,18 +1,22 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemoryListTool = (server: McpServer, memoryService: MemoryService): void => {
   server.registerTool(
     'memory-list',
     {
-      description:
-        'Use for orientation or debugging within an explicit scope. Prefer memory-search when a likely kind or subject is already known. Normal listing returns only active memories.',
+      description: normalizeWhitespace(`
+        Inspect active memories already stored in one
+        explicit scope for orientation or debugging. Do not
+        use this as the normal retrieval path for task
+        decisions; use \`memory-search\`, including
+        scope-plus-kind queries for broad recall.
+      `),
       inputSchema: {
-        scope: z.object({
-          type: z.enum(['user', 'repo', 'org']),
-          id: z.string().min(1),
-        }),
+        scope: mcpScopeSchema,
         kind: z.string().min(1).optional(),
         limit: z.number().int().positive().max(100).optional(),
       },

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { AppError } from '../common/errors.js'
 import { runTransaction } from '../common/db/db.js'
+import { resolveCanonicalScopeId } from '../common/resolve-canonical-scope-id.js'
 import { normalizeSubject } from './subject-normalizer.js'
 import type { ApplyObservationInput } from './dto/apply-observation.dto.js'
 import type { ContradictMemoryInput } from './dto/contradict-memory.dto.js'
@@ -40,6 +41,7 @@ import {
   runtimeMemoryPolicyResource,
   supportingGuidanceResources,
 } from '../guidance/guidance-catalog.js'
+import type { ScopeRef } from '../common/types/scope-ref.js'
 
 type MemoryServiceDeps = {
   memoryRepository: MemoryRepository
@@ -87,6 +89,11 @@ const ensureSourceType = (value: string): MemorySourceType => {
     'sourceType must be one of explicit_user_statement, observed_pattern, or tool_observation.',
   )
 }
+
+const canonicalizeScope = (scope: ScopeRef): ScopeRef => ({
+  type: scope.type,
+  id: resolveCanonicalScopeId(scope.type, scope.id),
+})
 
 const toContradictionReason = ({ replacementMemoryId }: { replacementMemoryId: string }): string =>
   `Memory was contradicted and superseded by ${replacementMemoryId}.`
@@ -148,7 +155,7 @@ export class MemoryService {
   }
 
   applyObservation(input: ApplyObservationInput): ApplyMemoryResult {
-    const scope = validateScope(input.scope)
+    const scope = canonicalizeScope(validateScope(input.scope))
     const kind = ensureNonEmpty(input.kind, 'INVALID_KIND', 'Observation kind must not be empty.')
     const statement = ensureNonEmpty(input.statement, 'INVALID_STATEMENT', 'Observation statement must not be empty.')
     const sourceType = ensureSourceType(input.sourceType)
@@ -255,7 +262,7 @@ export class MemoryService {
   }
 
   searchMemories(input: SearchMemoriesInput): SearchResult {
-    const scope = validateScope(input.scope)
+    const scope = canonicalizeScope(validateScope(input.scope))
     const subject = input.subject ? normalizeSubject(input.subject) : null
     const items = rankMemories(
       this.deps.memoryRepository.search({
@@ -272,7 +279,7 @@ export class MemoryService {
   }
 
   listMemories(input: ListMemoriesInput): MemoryListResult {
-    const scope = validateScope(input.scope)
+    const scope = canonicalizeScope(validateScope(input.scope))
     const items = rankMemories(
       this.deps.memoryRepository.list({
         scope,
@@ -365,7 +372,7 @@ export class MemoryService {
       throw new AppError('MEMORY_ALREADY_SUPERSEDED', `Memory already superseded: ${memory.id}`)
     }
 
-    const replacementScope = validateScope(input.replacement.scope)
+    const replacementScope = canonicalizeScope(validateScope(input.replacement.scope))
     if (replacementScope.type !== memory.scope.type || replacementScope.id !== memory.scope.id) {
       throw new AppError('INVALID_REPLACEMENT_SCOPE', 'Replacement memory must keep the same scope as the contradicted memory.')
     }
@@ -488,7 +495,7 @@ export class MemoryService {
     return {
       policyVersion: this.deps.policyVersion,
       description:
-        'Structured memories are accepted when scoped and non-empty, classified by sourceType, and governed by a unified lifecycle status. Live exact matches reinforce, contradiction suppresses the old memory and creates a new active replacement.',
+        'Compact summary of Hippocampus acceptance, matching, ranking, and contradiction rules, plus canonical and supporting guidance resource pointers.',
       acceptanceRules: [
         'scope type and id must be valid',
         'kind and statement must not be empty',
@@ -498,7 +505,9 @@ export class MemoryService {
       matchingRules: [
         'subject is normalized before lookup',
         'matching uses exact normalized subject key in v1',
-        'matching only treats candidate and active memories as live',
+        'repo scope ids are canonicalized by symlink resolution only; the service does not infer repo root from subdirectory paths',
+        'normal retrieval only returns active memories',
+        'matching only treats candidate and active memories as live for reinforcement and duplicate detection',
         `candidate memories promote to active at reinforcement count >= ${CANDIDATE_PROMOTION_THRESHOLD}`,
       ],
       rankingRules: [
@@ -511,7 +520,7 @@ export class MemoryService {
       sourceTypeDefinitions: memorySourceTypeDefinitions,
       statusDefinitions: memoryStatusDefinitions,
       contradictionRules: [
-        'normal retrieval only returns active memories',
+        'find the memory id with memory-search or memory-list before calling memory-contradict',
         'contradicting a memory suppresses the old memory and links it via supersededBy to the new active replacement',
         'memory-get returns supersededByMemory when a direct successor exists',
       ],

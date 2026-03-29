@@ -7,6 +7,7 @@ Use this supporting guidance after reading the canonical runtime policy at `hipp
 - Use `user` scope for durable personal preferences or habits that should carry across repositories.
 - Use `org` scope only when the fact clearly belongs to a shared organizational context.
 - Do not ask Hippocampus to infer scope when the right scope is already clear from context.
+- For `repo` scope, use the canonical absolute path to the repo root with symlinks resolved.
 
 ## Think like AGENTS.md
 - Treat `repo` scope like a repo-local `AGENTS.md`.
@@ -23,6 +24,7 @@ Use this supporting guidance after reading the canonical runtime policy at `hipp
 ## Scope mistakes to avoid
 - Do not put repo-only conventions into `user` scope.
 - Do not put one person’s preference into `org` scope.
+- Do not use a repo subdirectory as the scope id when the memory belongs to the repository as a whole.
 - Do not save task-local or rapidly changing notes in any scope.
 
 ## Before saving

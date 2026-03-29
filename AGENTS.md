@@ -35,6 +35,13 @@ Hippocampus is a local-first memory runtime for coding agents. The current syste
 - Use a temp `HIPPOCAMPUS_HOME` when testing or debugging manually.
 - Keep changes narrow. Do not mix architecture refactors with behavior changes unless necessary.
 
+## Database Compatibility
+
+- Hippocampus is currently pre-stable and local-only/in development.
+- The on-disk SQLite schema is not yet a supported compatibility contract.
+- Until the first public release, migration history may be rewritten or squashed to match the current canonical schema.
+- Before the first release, stop rewriting migration history and switch to additive-only migrations that preserve upgrade paths for existing local databases.
+
 ## Documentation
 
 - Keep the README product-facing and usage-oriented.

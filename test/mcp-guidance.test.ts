@@ -32,6 +32,34 @@ const getFirstTextContent = (value: unknown): string => {
   return first.text
 }
 
+const getScopeIdDescription = (tool: { inputSchema?: unknown } | undefined): string => {
+  if (!tool || !tool.inputSchema || typeof tool.inputSchema !== 'object' || !('properties' in tool.inputSchema)) {
+    return ''
+  }
+
+  const properties = tool.inputSchema.properties
+  if (!properties || typeof properties !== 'object' || !('scope' in properties)) {
+    return ''
+  }
+
+  const scope = properties.scope
+  if (!scope || typeof scope !== 'object' || !('properties' in scope)) {
+    return ''
+  }
+
+  const scopeProperties = scope.properties
+  if (!scopeProperties || typeof scopeProperties !== 'object' || !('id' in scopeProperties)) {
+    return ''
+  }
+
+  const id = scopeProperties.id
+  if (!id || typeof id !== 'object' || !('description' in id) || typeof id.description !== 'string') {
+    return ''
+  }
+
+  return id.description
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -153,9 +181,13 @@ describe('MCP guidance resource', () => {
       const searchTool = tools.tools.find(item => item.name === 'memory-search')
       const policyTool = tools.tools.find(item => item.name === 'memory-get-policy')
       const contradictTool = tools.tools.find(item => item.name === 'memory-contradict')
-      expect(searchTool?.description).toContain('only active memories')
-      expect(policyTool?.description).toContain('sourceType and status definitions')
-      expect(contradictTool?.description).toContain('suppress it, and create a new active replacement')
+      expect(searchTool?.description).toContain('Default retrieval tool')
+      expect(searchTool?.description).toContain('kind-only search is the broad-recall pattern')
+      expect(getScopeIdDescription(searchTool)).toContain('canonical absolute path to the repo root')
+      expect(policyTool?.description).toContain('Start here once per session')
+      expect(policyTool?.description).toContain('resource pointers')
+      expect(contradictTool?.description).toContain('First find the id with `memory-search` or `memory-list`')
+      expect(contradictTool?.description).toContain('replacement subject may differ')
 
       const searchResult = await client.callTool({
         name: 'memory-search',

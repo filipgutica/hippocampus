@@ -13,6 +13,9 @@ describe('guidance artifacts', () => {
 
     expect(guidance).toContain('# Hippocampus Runtime Memory Policy')
     expect(guidance).toContain('Use this policy first when deciding whether to retrieve or save memory through Hippocampus.')
+    expect(guidance).toContain('Kind-only recall is a `memory-search` pattern')
+    expect(guidance).toContain('## Recommended kinds')
+    expect(guidance).toContain('canonical absolute path to the repo root')
     expect(guidance).toContain('## Source Types')
     expect(guidance).toContain('## Status')
     expect(guidance).toContain('## Contradiction and supersession')
@@ -20,6 +23,7 @@ describe('guidance artifacts', () => {
     expect(runtimeMemoryPolicyResource.resourceUri).toBe('hippocampus://policy/runtime-memory')
     expect(runtimeMemoryPolicyResource.title).toBe('Hippocampus Runtime Memory Policy')
     expect(runtimeMemoryPolicyResource.description).toContain('Canonical runtime guidance')
+    expect(runtimeMemoryPolicyResource.description).toContain('threshold-driven behavior')
     expect(runtimeMemoryPolicyResource.mimeType).toBe('text/markdown')
   })
 
@@ -28,10 +32,12 @@ describe('guidance artifacts', () => {
 
     expect(guidance).toContain('# Hippocampus Memory Scope Guidance')
     expect(guidance).toContain('Use this supporting guidance after reading the canonical runtime policy')
+    expect(guidance).toContain('canonical absolute path to the repo root')
     expect(memoryScopeGuidanceResource.artifact).toBe('skills/memory-scope-skill.md')
     expect(memoryScopeGuidanceResource.resourceUri).toBe('hippocampus://skills/memory-scope')
     expect(memoryScopeGuidanceResource.title).toBe('Hippocampus Memory Scope Guidance')
     expect(memoryScopeGuidanceResource.description).toContain('Supporting guidance for choosing repo, user, or org scope')
+    expect(memoryScopeGuidanceResource.description).toContain('canonical repo scope ids')
     expect(memoryScopeGuidanceResource.mimeType).toBe('text/markdown')
   })
 

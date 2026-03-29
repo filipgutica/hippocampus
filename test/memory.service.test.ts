@@ -248,4 +248,69 @@ describe('MemoryService', () => {
 
     db.close()
   })
+
+  it('canonicalizes existing repo scope paths by realpath and preserves missing repo scope ids', () => {
+    const dir = createTempDir()
+    const dbFile = path.join(dir, 'hippocampus.db')
+    const db = initializeDatabase(dbFile)
+    const service = new MemoryService({
+      memoryRepository: new MemoryRepository(db),
+      memoryEventRepository: new MemoryEventRepository(db),
+      policyVersion: MEMORY_POLICY_VERSION,
+      db,
+    })
+    const repoRoot = path.join(dir, 'repo')
+    const repoSymlink = path.join(dir, 'repo-link')
+    const missingRepoScopeId = path.join(dir, 'missing-repo')
+
+    fs.mkdirSync(repoRoot)
+    fs.symlinkSync(repoRoot, repoSymlink)
+
+    const created = service.applyObservation({
+      scope: { type: 'repo', id: `${repoSymlink}${path.sep}` },
+      kind: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const realpathSearch = service.searchMemories({
+      scope: { type: 'repo', id: repoRoot },
+      subject: 'prefer pnpm',
+      limit: 10,
+    })
+    const trailingSlashSearch = service.searchMemories({
+      scope: { type: 'repo', id: `${repoRoot}${path.sep}` },
+      subject: 'prefer pnpm',
+      limit: 10,
+    })
+    const missingCreated = service.applyObservation({
+      scope: { type: 'repo', id: missingRepoScopeId },
+      kind: 'workflow',
+      subject: 'run tests before commit',
+      statement: 'Run tests before commit.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const missingSearch = service.searchMemories({
+      scope: { type: 'repo', id: missingRepoScopeId },
+      subject: 'run tests before commit',
+      limit: 10,
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected create decision for canonicalized repo path.')
+    }
+    if (missingCreated.decision !== 'create' || !('memory' in missingCreated)) {
+      throw new Error('Expected create decision for missing repo scope id.')
+    }
+
+    expect(created.memory.scope.id).toBe(fs.realpathSync(repoRoot))
+    expect(realpathSearch.total).toBe(1)
+    expect(trailingSlashSearch.total).toBe(1)
+    expect(missingCreated.memory.scope.id).toBe(missingRepoScopeId)
+    expect(missingSearch.total).toBe(1)
+
+    db.close()
+  })
 })

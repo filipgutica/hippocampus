@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { normalizeWhitespace } from '../common/utils.js'
 
 export type GuidanceRole = 'canonical-policy' | 'supporting-guidance'
 
@@ -16,8 +17,11 @@ export const runtimeMemoryPolicyResource: GuidanceResourceDefinition = {
   artifact: 'skills/memory-runtime-policy-skill.md',
   resourceUri: 'hippocampus://policy/runtime-memory',
   title: 'Hippocampus Runtime Memory Policy',
-  description:
-    'Canonical runtime guidance for when to search memory, when to save memory, and how to keep retrieval narrow and explicit.',
+  description: normalizeWhitespace(`
+    Canonical runtime guidance for retrieval, saving,
+    scope discipline, lifecycle rules, and
+    threshold-driven behavior.
+  `),
   mimeType: 'text/markdown',
 }
 
@@ -26,8 +30,10 @@ export const memoryScopeGuidanceResource: GuidanceResourceDefinition = {
   artifact: 'skills/memory-scope-skill.md',
   resourceUri: 'hippocampus://skills/memory-scope',
   title: 'Hippocampus Memory Scope Guidance',
-  description:
-    'Supporting guidance for choosing repo, user, or org scope when storing durable memories.',
+  description: normalizeWhitespace(`
+    Supporting guidance for choosing repo, user, or
+    org scope and constructing canonical repo scope ids.
+  `),
   mimeType: 'text/markdown',
 }
 

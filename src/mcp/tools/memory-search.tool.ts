@@ -1,18 +1,24 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemorySearchTool = (server: McpServer, memoryService: MemoryService): void => {
   server.registerTool(
     'memory-search',
     {
-      description:
-        'Use when a likely durable preference, convention, or stable project fact may affect the next action. Scope must be explicit, queries should stay narrow, and normal retrieval returns only active memories using exact normalized subject matching when a subject is provided.',
+      description: normalizeWhitespace(`
+        Default retrieval tool for one explicit scope.
+        Use when a durable preference, convention, workflow,
+        or project fact may change the next action. Keep
+        queries narrow with \`subject\` when possible; kind-only
+        search is the broad-recall pattern when you need
+        a class of memories. Normal results only include
+        active memories.
+      `),
       inputSchema: {
-        scope: z.object({
-          type: z.enum(['user', 'repo', 'org']),
-          id: z.string().min(1),
-        }),
+        scope: mcpScopeSchema,
         kind: z.string().min(1).optional(),
         subject: z.string().optional(),
         limit: z.number().int().positive().max(100).optional(),

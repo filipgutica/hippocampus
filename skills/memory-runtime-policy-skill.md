@@ -18,9 +18,14 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - Always choose scope explicitly.
 - Prefer adding `subject` when you have a likely durable topic in mind.
 - Add `kind` when you already know the class of memory you want.
-- Use `memory-search` for targeted retrieval and `memory-list` only for orientation or debugging.
+- Kind-only recall is a `memory-search` pattern: use `scope + kind` with no `subject` when you need a class of memories without falling back to a full list.
+- Use `memory-search` for task retrieval and `memory-list` only for orientation or debugging.
 - Normal retrieval only returns memories with `status = active`.
 - In v1, subject matching is exact after normalization, so search with the clearest likely durable subject.
+
+## Recommended kinds
+- Prefer stable kind names unless a more specific kind is clearly warranted: `preference`, `convention`, `workflow`, `project-fact`, `tooling`.
+- Inconsistent kind naming silently splits durable memories into separate buckets that will not surface together.
 
 ## Source Types
 - `explicit_user_statement`: a durable fact, preference, or instruction directly stated by the user. New memories of this type normally start `active`.
@@ -52,11 +57,13 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - Use `user` for durable personal preferences or habits that carry across repositories.
 - Use `org` only when the fact clearly belongs to a broader organizational context.
 - Prefer the narrowest scope that will still be useful later.
+- For `repo` scope, use the canonical absolute path to the repo root with symlinks resolved. Do not use a subdirectory path when the memory belongs to the repository as a whole.
 
 ## When to save memory
 - Save information that is likely to matter again in a future run.
 - Good candidates include preferences, conventions, recurring workflow details, and stable project facts.
 - Save observations in a structured form with an explicit scope, kind, subject, and concise statement.
+- If you are saving `observed_pattern`, remember that it starts as `candidate` and will not appear in normal retrieval until reinforced enough to promote.
 
 ## When not to save memory
 - Do not save transient task state, one-off debugging notes, or instructions that only matter for the current run.
@@ -69,7 +76,7 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - If the fact is uncertain or still changing, wait until it stabilizes.
 
 ## Example flows
-- Retrieval flow: Before choosing a package manager command in a repo, search repo scope for subject `prefer pnpm` or a known workflow/preference kind. Only active memories will be returned.
+- Retrieval flow: Before choosing a package manager command in a repo, search repo scope for subject `prefer pnpm` or do kind-only recall such as `kind = preference` when you need that class of memories. Only active memories will be returned.
 - Save flow: After confirming a repo convention like `This repository uses pnpm`, save it in repo scope with `sourceType = tool_observation`.
 - Pattern flow: If the user repeatedly corrects long answers toward shorter ones, save that as `sourceType = observed_pattern` and expect it to remain `candidate` until reinforced enough to promote.
 - Contradiction flow: If an old memory says `Use pnpm for this repo.` but the repo has moved to npm, contradict the old memory so it becomes `suppressed` and points to the new active replacement.

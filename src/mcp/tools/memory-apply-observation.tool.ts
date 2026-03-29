@@ -1,18 +1,25 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemoryApplyObservationTool = (server: McpServer, memoryService: MemoryService): void => {
   server.registerTool(
     'memory-apply-observation',
     {
-      description:
-        'Save only durable scoped observations such as stable preferences, conventions, workflows, or project facts. Choose sourceType explicitly: explicit_user_statement for direct user statements, observed_pattern for repeated inferred behavior, and tool_observation for durable repo/config/tool evidence.',
+      description: normalizeWhitespace(`
+        Save one durable scoped memory. If you have not
+        loaded Hippocampus guidance this session, call
+        \`memory-get-policy\` first. Use this for stable
+        preferences, conventions, workflows, or project
+        facts, not transient task state. \`observed_pattern\`
+        starts as \`candidate\` and will not appear in normal
+        search/list results until reinforced enough to
+        promote.
+      `),
       inputSchema: {
-        scope: z.object({
-          type: z.enum(['user', 'repo', 'org']),
-          id: z.string().min(1),
-        }),
+        scope: mcpScopeSchema,
         kind: z.string().min(1),
         subject: z.string().min(1),
         statement: z.string().min(1),

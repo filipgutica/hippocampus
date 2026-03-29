@@ -28,6 +28,72 @@ const getFirstTextContent = (value: unknown): string => {
   return first.text
 }
 
+const getScopeIdDescription = (tool: { inputSchema?: unknown } | undefined): string => {
+  if (!tool || !tool.inputSchema || typeof tool.inputSchema !== 'object' || !('properties' in tool.inputSchema)) {
+    return ''
+  }
+
+  const properties = tool.inputSchema.properties
+  if (!properties || typeof properties !== 'object' || !('scope' in properties)) {
+    return ''
+  }
+
+  const scope = properties.scope
+  if (!scope || typeof scope !== 'object' || !('properties' in scope)) {
+    return ''
+  }
+
+  const scopeProperties = scope.properties
+  if (!scopeProperties || typeof scopeProperties !== 'object' || !('id' in scopeProperties)) {
+    return ''
+  }
+
+  const id = scopeProperties.id
+  if (!id || typeof id !== 'object' || !('description' in id) || typeof id.description !== 'string') {
+    return ''
+  }
+
+  return id.description
+}
+
+const getReplacementScopeIdDescription = (tool: { inputSchema?: unknown } | undefined): string => {
+  if (!tool || !tool.inputSchema || typeof tool.inputSchema !== 'object' || !('properties' in tool.inputSchema)) {
+    return ''
+  }
+
+  const properties = tool.inputSchema.properties
+  if (!properties || typeof properties !== 'object' || !('replacement' in properties)) {
+    return ''
+  }
+
+  const replacement = properties.replacement
+  if (!replacement || typeof replacement !== 'object' || !('properties' in replacement)) {
+    return ''
+  }
+
+  const replacementProperties = replacement.properties
+  if (!replacementProperties || typeof replacementProperties !== 'object' || !('scope' in replacementProperties)) {
+    return ''
+  }
+
+  const scope = replacementProperties.scope
+  if (!scope || typeof scope !== 'object' || !('properties' in scope)) {
+    return ''
+  }
+
+  const scopeProperties = scope.properties
+  if (!scopeProperties || typeof scopeProperties !== 'object' || !('id' in scopeProperties)) {
+    return ''
+  }
+
+  const id = scopeProperties.id
+  if (!id || typeof id !== 'object' || !('description' in id) || typeof id.description !== 'string') {
+    return ''
+  }
+
+  return id.description
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -61,16 +127,24 @@ describe('MCP memory management tools', () => {
       const historyTool = tools.tools.find(tool => tool.name === 'memory-get-history')
       const applyTool = tools.tools.find(tool => tool.name === 'memory-apply-observation')
       const contradictTool = tools.tools.find(tool => tool.name === 'memory-contradict')
+      const searchTool = tools.tools.find(tool => tool.name === 'memory-search')
       expect(listTool).toBeDefined()
       expect(getTool).toBeDefined()
       expect(historyTool).toBeDefined()
       expect(applyTool).toBeDefined()
       expect(contradictTool).toBeDefined()
+      expect(searchTool?.description).toContain('kind-only search is the broad-recall pattern')
       expect(listTool?.description).toContain('orientation or debugging')
-      expect(getTool?.description).toContain('supersededByMemory')
-      expect(historyTool?.description).toContain('contradiction and supersession events')
-      expect(applyTool?.description).toContain('Choose sourceType explicitly')
-      expect(contradictTool?.description).toContain('create a new active replacement')
+      expect(listTool?.description).toContain('Do not use this as the normal retrieval path')
+      expect(getTool?.description).toContain('including non-active memories')
+      expect(historyTool?.description).toContain('later archival history')
+      expect(applyTool?.description).toContain('call `memory-get-policy` first')
+      expect(applyTool?.description).toContain('will not appear in normal search/list results')
+      expect(contradictTool?.description).toContain('First find the id with `memory-search` or `memory-list`')
+      expect(getScopeIdDescription(searchTool)).toContain('canonical absolute path to the repo root')
+      expect(getScopeIdDescription(listTool)).toContain('canonical absolute path to the repo root')
+      expect(getScopeIdDescription(applyTool)).toContain('canonical absolute path to the repo root')
+      expect(getReplacementScopeIdDescription(contradictTool)).toContain('canonical absolute path to the repo root')
       expect(tools.tools.some(tool => tool.name === 'memory-delete')).toBe(false)
 
       const applied = await client.callTool({

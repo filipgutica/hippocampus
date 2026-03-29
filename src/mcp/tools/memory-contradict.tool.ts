@@ -1,20 +1,25 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemoryContradictTool = (server: McpServer, memoryService: MemoryService): void => {
   server.registerTool(
     'memory-contradict',
     {
-      description:
-        'Contradict an existing memory by id, suppress it, and create a new active replacement in the same scope and kind. Use this when the old memory is no longer trustworthy and should point to updated state.',
+      description: normalizeWhitespace(`
+        Correct a stale or wrong memory by id. First find
+        the id with \`memory-search\` or \`memory-list\`, then
+        call this tool to suppress the old memory and create
+        a new active replacement in the same scope and kind.
+        The replacement subject may differ from the old
+        subject when the durable topic itself has changed.
+      `),
       inputSchema: {
         id: z.string().min(1),
         replacement: z.object({
-          scope: z.object({
-            type: z.enum(['user', 'repo', 'org']),
-            id: z.string().min(1),
-          }),
+          scope: mcpScopeSchema,
           kind: z.string().min(1),
           subject: z.string().min(1),
           statement: z.string().min(1),

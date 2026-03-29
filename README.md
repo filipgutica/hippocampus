@@ -17,6 +17,8 @@ Hippocampus currently supports:
 
 Local state lives in `~/.hippocampus` by default. Set `HIPPOCAMPUS_HOME` to use a different location.
 
+Hippocampus is still pre-stable and local-only during development. The local SQLite schema may change, and local state may need to be reset between development iterations until a release compatibility policy is locked.
+
 ## Install and Run
 
 Canonical published MCP server command:
@@ -77,7 +79,7 @@ Policy discovery flow:
 - call `memory-get-policy` first to discover canonical and supporting guidance resources
 - read `hippocampus://policy/runtime-memory` for runtime usage guidance
 - read `hippocampus://skills/memory-scope` for scope selection guidance
-- rely on MCP tool descriptions to reinforce when to search, list, inspect, or save
+- rely on MCP tool descriptions to reinforce when to search, list, inspect, contradict, or save
 
 ## Local Development
 
@@ -144,6 +146,8 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js apply \
   --statement "Use pnpm for this repo."
 ```
 
+For `repo` scope, prefer the canonical absolute path to the repo root with symlinks resolved. The CLI still infers the repo root when `--scope-id` is omitted, but MCP callers should pass the root path explicitly.
+
 Search active memories:
 
 ```bash
@@ -154,11 +158,19 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js search \
   --json
 ```
 
+Kind-only broad recall should still use `memory-search`, for example `scope + kind = preference`, rather than `memory-list`.
+
 Fields to expect on stored memories:
 
 - `sourceType`: why the memory exists: `explicit_user_statement`, `observed_pattern`, or `tool_observation`
 - `status`: lifecycle state: `candidate`, `active`, `suppressed`, `archived`, or `deleted`
 - `supersededBy`: id of the direct replacement memory when a memory has been contradicted
+
+Current retrieval behavior:
+
+- `observed_pattern` memories start as `candidate`
+- `candidate` memories do not appear in normal `memory-search` or `memory-list` results
+- a `candidate` memory promotes to `active` after enough reinforcement
 
 Contradict a memory over MCP:
 
@@ -194,5 +206,11 @@ The next active area is to extend lifecycle management beyond explicit contradic
 
 - Keep `memory-search` as the default retrieval primitive unless a future pass intentionally changes matching behavior.
 - Add decay, archival, and contradiction-resolution workflows deliberately rather than relying on uncontrolled heuristics.
+
+## First Release Checklist
+
+- Stop rewriting or squashing migration history.
+- Treat the on-disk database as a compatibility surface.
+- Switch to additive-only migrations that preserve upgrade paths for existing local databases.
 
 Hippocampus should continue to own deterministic runtime behavior such as validation, persistence, retrieval, and memory state transitions.

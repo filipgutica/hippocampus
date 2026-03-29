@@ -79,6 +79,22 @@ export const migrations: Migration[] = [
         ON memories(status, scope_type, scope_id, kind);
     `,
   },
+  {
+    version: 3,
+    name: 'memory_classification_and_supersession',
+    up: `
+      ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL DEFAULT 'explicit_user_statement';
+      ALTER TABLE memories ADD COLUMN superseded_by TEXT REFERENCES memories(id);
+
+      DROP INDEX IF EXISTS idx_memories_active_scope_kind_subject;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_scope_kind_subject
+        ON memories(scope_type, scope_id, kind, subject_key)
+        WHERE status IN ('candidate', 'active');
+
+      CREATE INDEX IF NOT EXISTS idx_memories_superseded_by
+        ON memories(superseded_by);
+    `,
+  },
 ]
 
 export const runMigrations = (db: InstanceType<typeof Database>): void => {

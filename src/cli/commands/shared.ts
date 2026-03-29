@@ -5,7 +5,7 @@ import type { ApplyObservationInput } from '../../memory/dto/apply-observation.d
 import type { InitResult } from '../../app/init.service.js'
 import type { ApplyMemoryResult, DeleteMemoryResult, MemoryHistoryResult, MemoryListResult, SearchResult } from '../../memory/models/memory-result.js'
 import type { GetPolicyResult } from '../../memory/dto/get-policy.dto.js'
-import type { MemoryRecord } from '../../memory/models/memory-record.js'
+import type { MemoryGetResult, MemoryRecord } from '../../memory/models/memory-record.js'
 
 export type CliResult = {
   code: number
@@ -24,7 +24,9 @@ export const parseArgValue = (argv: string[], name: string): string | undefined 
 export const hasFlag = (argv: string[], name: string): boolean => argv.includes(name)
 
 const hasObservationArgs = (argv: string[]): boolean =>
-  ['--scope-type', '--scope-id', '--kind', '--subject', '--statement', '--details'].some(flag => argv.includes(flag))
+  ['--scope-type', '--scope-id', '--kind', '--subject', '--statement', '--details', '--source-type'].some(flag =>
+    argv.includes(flag),
+  )
 
 export const resolveScope = (argv: string[]): ScopeRef => {
   const scopeType = parseArgValue(argv, '--scope-type') ?? 'repo'
@@ -90,10 +92,12 @@ const formatMemory = (memory: MemoryRecord): string =>
     `subjectKey: ${memory.subjectKey}`,
     `statement: ${memory.statement}`,
     `details: ${memory.details ?? '-'}`,
+    `sourceType: ${memory.sourceType}`,
     `confidence: ${memory.confidence}`,
     `reinforcementCount: ${memory.reinforcementCount}`,
     `policyVersion: ${memory.policyVersion}`,
     `status: ${memory.status}`,
+    `supersededBy: ${memory.supersededBy ?? '-'}`,
     `createdAt: ${memory.createdAt}`,
     `updatedAt: ${memory.updatedAt}`,
     `lastObservedAt: ${memory.lastObservedAt}`,
@@ -194,6 +198,15 @@ export const formatPolicyResult = (result: GetPolicyResult): string =>
     'rankingRules:',
     ...result.rankingRules.map(rule => `- ${rule}`),
     '',
+    'sourceTypeDefinitions:',
+    ...result.sourceTypeDefinitions.map(definition => `- ${definition.value}: ${definition.description}`),
+    '',
+    'statusDefinitions:',
+    ...result.statusDefinitions.map(definition => `- ${definition.value}: ${definition.description}`),
+    '',
+    'contradictionRules:',
+    ...result.contradictionRules.map(rule => `- ${rule}`),
+    '',
     'canonicalPolicy:',
     `- title: ${result.canonicalPolicy.title}`,
     `- uri: ${result.canonicalPolicy.uri}`,
@@ -218,4 +231,7 @@ export const formatPolicyResult = (result: GetPolicyResult): string =>
     `guidanceArtifact: ${result.guidanceArtifact}`,
   ].join('\n')
 
-export const formatMemoryRecord = (memory: MemoryRecord): string => formatMemory(memory)
+export const formatMemoryRecord = (memory: MemoryGetResult): string =>
+  memory.supersededByMemory
+    ? [formatMemory(memory), '', 'supersededByMemory:', '', formatMemory(memory.supersededByMemory)].join('\n')
+    : formatMemory(memory)

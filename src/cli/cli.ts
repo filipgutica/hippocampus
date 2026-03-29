@@ -2,6 +2,7 @@ import yargs from 'yargs'
 import { buildApp, type RuntimeApp } from '../app/build-app.js'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../memory/dto/apply-observation.dto.js'
+import type { MemorySourceType } from '../memory/types/memory.types.js'
 import { resolveRepoScopeId } from '../repos/types.js'
 import { runApplyCommand } from './commands/apply.command.js'
 import { runGetPolicyCommand } from './commands/get-policy.command.js'
@@ -28,6 +29,7 @@ type ApplyArgs = ScopeArgs &
     kind?: string
     subject?: string
     statement?: string
+    sourceType?: MemorySourceType
     details?: string
     input?: string
     inputFile?: string
@@ -71,6 +73,7 @@ const loadApplyInput = (args: ApplyArgs, argv: string[]): ApplyObservationInput 
     kind: parsedInput.kind ?? args.kind ?? '',
     subject: parsedInput.subject ?? args.subject ?? '',
     statement: parsedInput.statement ?? args.statement ?? '',
+    sourceType: parsedInput.sourceType ?? args.sourceType ?? ('' as MemorySourceType),
     details: parsedInput.details ?? args.details ?? null,
     source: resolveObservationSource(parsedInput) ?? { channel: 'cli' },
   }
@@ -135,6 +138,10 @@ const createParser = (argv: string[], io: CliIO) => {
           })
           .option('statement', {
             type: 'string',
+          })
+          .option('source-type', {
+            type: 'string',
+            choices: ['explicit_user_statement', 'observed_pattern', 'tool_observation'] as const,
           })
           .option('details', {
             type: 'string',

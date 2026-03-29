@@ -35,7 +35,7 @@ afterEach(() => {
 })
 
 describe('MCP memory management tools', () => {
-  it('lists, gets, histories, and keeps delete off the default MCP surface', async () => {
+  it('supports apply, contradiction, inspection, and keeps delete off the default MCP surface', async () => {
     const home = createTempDir()
     const app = await buildApp({
       mode: 'runtime',
@@ -60,14 +60,17 @@ describe('MCP memory management tools', () => {
       const getTool = tools.tools.find(tool => tool.name === 'memory-get')
       const historyTool = tools.tools.find(tool => tool.name === 'memory-get-history')
       const applyTool = tools.tools.find(tool => tool.name === 'memory-apply-observation')
+      const contradictTool = tools.tools.find(tool => tool.name === 'memory-contradict')
       expect(listTool).toBeDefined()
       expect(getTool).toBeDefined()
       expect(historyTool).toBeDefined()
       expect(applyTool).toBeDefined()
+      expect(contradictTool).toBeDefined()
       expect(listTool?.description).toContain('orientation or debugging')
-      expect(getTool?.description).toContain('known memory by id after discovery')
-      expect(historyTool?.description).toContain('not the normal retrieval path')
-      expect(applyTool?.description).toContain('Save only durable scoped observations')
+      expect(getTool?.description).toContain('supersededByMemory')
+      expect(historyTool?.description).toContain('contradiction and supersession events')
+      expect(applyTool?.description).toContain('Choose sourceType explicitly')
+      expect(contradictTool?.description).toContain('create a new active replacement')
       expect(tools.tools.some(tool => tool.name === 'memory-delete')).toBe(false)
 
       const applied = await client.callTool({
@@ -77,10 +80,32 @@ describe('MCP memory management tools', () => {
           kind: 'preference',
           subject: 'Prefer pnpm',
           statement: 'Use pnpm for this repo.',
+          sourceType: 'explicit_user_statement',
         },
       })
       const appliedResult = JSON.parse(getFirstTextContent(applied.content)) as { memory: { id: string } }
       const memoryId = appliedResult.memory.id
+
+      const contradicted = await client.callTool({
+        name: 'memory-contradict',
+        arguments: {
+          id: memoryId,
+          replacement: {
+            scope: { type: 'repo', id: '/tmp/example-repo' },
+            kind: 'preference',
+            subject: 'Prefer npm',
+            statement: 'Use npm for this repo.',
+            sourceType: 'explicit_user_statement',
+          },
+        },
+      })
+      const contradictedResult = JSON.parse(getFirstTextContent(contradicted.content)) as {
+        replacementMemory: { id: string }
+        contradictedMemory: { status: string; supersededBy: string }
+      }
+      const replacementMemoryId = contradictedResult.replacementMemory.id
+      expect(contradictedResult.contradictedMemory.status).toBe('suppressed')
+      expect(contradictedResult.contradictedMemory.supersededBy).toBe(replacementMemoryId)
 
       const listed = await client.callTool({
         name: 'memory-list',
@@ -95,25 +120,35 @@ describe('MCP memory management tools', () => {
         name: 'memory-get',
         arguments: { id: memoryId },
       })
-      const memory = JSON.parse(getFirstTextContent(fetched.content)) as { id: string; status: string }
+      const memory = JSON.parse(getFirstTextContent(fetched.content)) as {
+        id: string
+        status: string
+        supersededBy: string
+        supersededByMemory: { id: string; status: string }
+      }
       expect(memory.id).toBe(memoryId)
-      expect(memory.status).toBe('active')
+      expect(memory.status).toBe('suppressed')
+      expect(memory.supersededBy).toBe(replacementMemoryId)
+      expect(memory.supersededByMemory.id).toBe(replacementMemoryId)
+      expect(memory.supersededByMemory.status).toBe('active')
 
       const historyBeforeDelete = await client.callTool({
         name: 'memory-get-history',
         arguments: { id: memoryId },
       })
-      const historyBeforeDeleteResult = JSON.parse(getFirstTextContent(historyBeforeDelete.content)) as { total: number }
-      expect(historyBeforeDeleteResult.total).toBe(1)
+      const historyBeforeDeleteResult = JSON.parse(getFirstTextContent(historyBeforeDelete.content)) as {
+        items: Array<{ eventType: string }>
+      }
+      expect(historyBeforeDeleteResult.items.map(item => item.eventType)).toEqual(['created', 'contradicted'])
 
       app.memoryService.deleteMemory({
-        id: memoryId,
+        id: replacementMemoryId,
         source: { channel: 'cli' },
       })
 
       const historyAfterDelete = await client.callTool({
         name: 'memory-get-history',
-        arguments: { id: memoryId },
+        arguments: { id: replacementMemoryId },
       })
       const historyAfterDeleteResult = JSON.parse(getFirstTextContent(historyAfterDelete.content)) as {
         items: Array<{ eventType: string }>
@@ -130,6 +165,16 @@ describe('MCP memory management tools', () => {
       })
       const searchResult = JSON.parse(getFirstTextContent(searched.content)) as { total: number }
       expect(searchResult.total).toBe(0)
+      const replacementSearch = await client.callTool({
+        name: 'memory-search',
+        arguments: {
+          scope: { type: 'repo', id: '/tmp/example-repo' },
+          subject: 'prefer npm',
+          limit: 10,
+        },
+      })
+      const replacementSearchResult = JSON.parse(getFirstTextContent(replacementSearch.content)) as { total: number }
+      expect(replacementSearchResult.total).toBe(0)
       expect(tools.tools.some(tool => tool.name === 'memory-query')).toBe(false)
     } finally {
       await client.close()

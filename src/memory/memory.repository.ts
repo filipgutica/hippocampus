@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import type { MemoryRecord } from './models/memory-record.js'
-import type { MemoryStatus } from './types/memory.types.js'
+import type { MemorySourceType, MemoryStatus } from './types/memory.types.js'
 
 type MemoryRow = {
   id: string
@@ -13,6 +13,7 @@ type MemoryRow = {
   subject_key: string
   statement: string
   details: string | null
+  source_type: MemorySourceType
   confidence: number
   reinforcement_count: number
   policy_version: string
@@ -20,6 +21,7 @@ type MemoryRow = {
   updated_at: string
   last_observed_at: string
   status: MemoryStatus
+  superseded_by: string | null
   deleted_at: string | null
 }
 
@@ -31,6 +33,7 @@ const toRecord = (row: MemoryRow): MemoryRecord => ({
   subjectKey: row.subject_key,
   statement: row.statement,
   details: row.details,
+  sourceType: row.source_type,
   confidence: row.confidence,
   reinforcementCount: row.reinforcement_count,
   policyVersion: row.policy_version,
@@ -38,6 +41,7 @@ const toRecord = (row: MemoryRow): MemoryRecord => ({
   updatedAt: row.updated_at,
   lastObservedAt: row.last_observed_at,
   status: row.status,
+  supersededBy: row.superseded_by,
   deletedAt: row.deleted_at,
 })
 
@@ -54,7 +58,7 @@ export class MemoryRepository {
         `
           SELECT *
           FROM memories
-          WHERE scope_type = ? AND scope_id = ? AND kind = ? AND subject_key = ? AND status = 'active'
+          WHERE scope_type = ? AND scope_id = ? AND kind = ? AND subject_key = ? AND status IN ('candidate', 'active')
           LIMIT 1
         `,
       )
@@ -64,26 +68,32 @@ export class MemoryRepository {
   }
 
   insert(input: {
+    id?: string
     scope: ScopeRef
     kind: string
     subject: string
     subjectKey: string
     statement: string
     details?: string | null
+    sourceType: MemorySourceType
+    status: MemoryStatus
     policyVersion: string
     confidence?: number
+    reinforcementCount?: number
+    supersededBy?: string | null
     now: string
   }): MemoryRecord {
-    const id = randomUUID()
+    const id = input.id ?? randomUUID()
     const confidence = input.confidence ?? 1
+    const reinforcementCount = input.reinforcementCount ?? 1
 
     this.db
       .prepare(
         `
           INSERT INTO memories (
             id, scope_type, scope_id, kind, subject, subject_key, statement, details,
-            confidence, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, status, deleted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            source_type, confidence, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, status, superseded_by, deleted_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -95,13 +105,15 @@ export class MemoryRepository {
         input.subjectKey,
         input.statement,
         input.details ?? null,
+        input.sourceType,
         confidence,
-        1,
+        reinforcementCount,
         input.policyVersion,
         input.now,
         input.now,
         input.now,
-        'active',
+        input.status,
+        input.supersededBy ?? null,
         null,
       )
 
@@ -113,13 +125,15 @@ export class MemoryRepository {
       subjectKey: input.subjectKey,
       statement: input.statement,
       details: input.details ?? null,
+      sourceType: input.sourceType,
       confidence,
-      reinforcementCount: 1,
+      reinforcementCount,
       policyVersion: input.policyVersion,
       createdAt: input.now,
       updatedAt: input.now,
       lastObservedAt: input.now,
-      status: 'active',
+      status: input.status,
+      supersededBy: input.supersededBy ?? null,
       deletedAt: null,
     }
   }
@@ -128,6 +142,10 @@ export class MemoryRepository {
     memory: MemoryRecord
     statement: string
     details?: string | null
+    sourceType: MemorySourceType
+    status: MemoryStatus
+    confidence: number
+    reinforcementCount: number
     policyVersion: string
     now: string
   }): MemoryRecord {
@@ -135,11 +153,14 @@ export class MemoryRepository {
       ...input.memory,
       statement: input.statement,
       details: input.details ?? input.memory.details,
-      confidence: input.memory.confidence + 1,
-      reinforcementCount: input.memory.reinforcementCount + 1,
+      sourceType: input.sourceType,
+      confidence: input.confidence,
+      reinforcementCount: input.reinforcementCount,
       policyVersion: input.policyVersion,
       updatedAt: input.now,
       lastObservedAt: input.now,
+      status: input.status,
+      supersededBy: null,
       deletedAt: null,
     }
 
@@ -147,18 +168,20 @@ export class MemoryRepository {
       .prepare(
         `
           UPDATE memories
-          SET statement = ?, details = ?, confidence = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, deleted_at = NULL
+          SET statement = ?, details = ?, source_type = ?, confidence = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, status = ?, superseded_by = NULL, deleted_at = NULL
           WHERE id = ?
         `,
       )
       .run(
         next.statement,
         next.details,
+        next.sourceType,
         next.confidence,
         next.reinforcementCount,
         next.policyVersion,
         next.updatedAt,
         next.lastObservedAt,
+        next.status,
         next.id,
       )
 
@@ -243,6 +266,53 @@ export class MemoryRepository {
         `,
       )
       .run(next.deletedAt, next.updatedAt, next.id)
+
+    return next
+  }
+
+  suppress(input: {
+    memory: MemoryRecord
+    now: string
+  }): MemoryRecord {
+    const next: MemoryRecord = {
+      ...input.memory,
+      status: 'suppressed',
+      updatedAt: input.now,
+    }
+
+    this.db
+      .prepare(
+        `
+          UPDATE memories
+          SET status = 'suppressed', updated_at = ?
+          WHERE id = ?
+        `,
+      )
+      .run(next.updatedAt, next.id)
+
+    return next
+  }
+
+  setSupersededBy(input: {
+    memory: MemoryRecord
+    supersededBy: string
+    now: string
+  }): MemoryRecord {
+    const next: MemoryRecord = {
+      ...input.memory,
+      supersededBy: input.supersededBy,
+      updatedAt: input.now,
+    }
+
+    this.db
+      .prepare(
+        `
+          UPDATE memories
+          SET superseded_by = ?, updated_at = ?
+          WHERE id = ?
+        `,
+      )
+      .run(next.supersededBy, next.updatedAt, next.id)
 
     return next
   }

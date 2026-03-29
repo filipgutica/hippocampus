@@ -3,6 +3,7 @@ import { InitService, type InitResult } from './init.service.js'
 import { openDatabase } from '../common/db/db.js'
 import { MemoryRepository } from '../memory/memory.repository.js'
 import { MemoryEventRepository } from '../memory/memory-event.repository.js'
+import { MEMORY_POLICY_VERSION } from '../memory/memory.policy.js'
 import { MemoryService } from '../memory/memory.service.js'
 import { createMcpServer } from '../mcp/server.js'
 
@@ -56,7 +57,7 @@ export const buildApp = async (options: BuildAppOptions): Promise<AppContainer> 
   const memoryService = new MemoryService({
     memoryRepository,
     memoryEventRepository,
-    policyVersion: '1',
+    policyVersion: MEMORY_POLICY_VERSION,
     db,
   })
 

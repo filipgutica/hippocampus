@@ -19,7 +19,7 @@ afterEach(() => {
 })
 
 describe('database migrations', () => {
-  it('adds soft-delete columns and indexes', () => {
+  it('adds lifecycle classification columns and indexes', () => {
     const dir = createTempDir()
     const db = initializeDatabase(path.join(dir, 'hippocampus.db'))
 
@@ -28,8 +28,11 @@ describe('database migrations', () => {
 
     expect(tableInfo.some(column => column.name === 'status')).toBe(true)
     expect(tableInfo.some(column => column.name === 'deleted_at')).toBe(true)
-    expect(indexes.some(index => index.name === 'idx_memories_active_scope_kind_subject')).toBe(true)
+    expect(tableInfo.some(column => column.name === 'source_type')).toBe(true)
+    expect(tableInfo.some(column => column.name === 'superseded_by')).toBe(true)
+    expect(indexes.some(index => index.name === 'idx_memories_live_scope_kind_subject')).toBe(true)
     expect(indexes.some(index => index.name === 'idx_memories_status_scope_kind')).toBe(true)
+    expect(indexes.some(index => index.name === 'idx_memories_superseded_by')).toBe(true)
 
     db.close()
   })

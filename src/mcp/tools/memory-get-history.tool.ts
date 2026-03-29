@@ -6,7 +6,8 @@ export const registerMemoryGetHistoryTool = (server: McpServer, memoryService: M
   server.registerTool(
     'memory-get-history',
     {
-      description: 'Audit or debug how a known memory evolved over time. This is not the normal retrieval path for deciding the next action.',
+      description:
+        'Audit or debug how a known memory evolved over time, including contradiction and supersession events. This is not the normal retrieval path for deciding the next action.',
       inputSchema: {
         id: z.string().min(1),
       },

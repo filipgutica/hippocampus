@@ -73,6 +73,8 @@ describe('runCli', () => {
           scopeId,
           '--kind',
           'preference',
+          '--source-type',
+          'explicit_user_statement',
           '--subject',
           ' Prefer pnpm ',
           '--statement',
@@ -126,6 +128,8 @@ describe('runCli', () => {
           scopeId,
           '--kind',
           'preference',
+          '--source-type',
+          'explicit_user_statement',
           '--subject',
           'Prefer pnpm',
           '--statement',
@@ -149,9 +153,16 @@ describe('runCli', () => {
 
       const inspectIo = createIo()
       await runCli(['memories', 'inspect', '--id', memoryId!, '--json'], inspectIo.io)
-      const inspectResult = JSON.parse(inspectIo.getStdout().trim()) as { id: string; status: string }
+      const inspectResult = JSON.parse(inspectIo.getStdout().trim()) as {
+        id: string
+        status: string
+        sourceType: string
+        supersededByMemory: unknown
+      }
       expect(inspectResult.id).toBe(memoryId)
       expect(inspectResult.status).toBe('active')
+      expect(inspectResult.sourceType).toBe('explicit_user_statement')
+      expect(inspectResult.supersededByMemory).toBeNull()
 
       const historyIo = createIo()
       await runCli(['memories', 'history', '--id', memoryId!, '--json'], historyIo.io)

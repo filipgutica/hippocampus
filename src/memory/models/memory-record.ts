@@ -1,6 +1,6 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { ApplyObservationInput, ObservationSource } from '../dto/apply-observation.dto.js'
-import type { MemoryEventType, MemoryStatus } from '../types/memory.types.js'
+import type { MemoryEventType, MemorySourceType, MemoryStatus } from '../types/memory.types.js'
 
 export type MemoryRecord = {
   id: string
@@ -10,6 +10,7 @@ export type MemoryRecord = {
   subjectKey: string
   statement: string
   details: string | null
+  sourceType: MemorySourceType
   confidence: number
   reinforcementCount: number
   policyVersion: string
@@ -17,7 +18,12 @@ export type MemoryRecord = {
   updatedAt: string
   lastObservedAt: string
   status: MemoryStatus
+  supersededBy: string | null
   deletedAt: string | null
+}
+
+export type MemoryGetResult = MemoryRecord & {
+  supersededByMemory: MemoryRecord | null
 }
 
 export type MemoryEventRecord = {

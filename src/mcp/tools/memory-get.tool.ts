@@ -6,7 +6,8 @@ export const registerMemoryGetTool = (server: McpServer, memoryService: MemorySe
   server.registerTool(
     'memory-get',
     {
-      description: 'Inspect a known memory by id after discovery through search or list.',
+      description:
+        'Inspect a known memory by id after discovery through search or list. If the memory has been superseded, the response includes the full direct successor as supersededByMemory.',
       inputSchema: {
         id: z.string().min(1),
       },

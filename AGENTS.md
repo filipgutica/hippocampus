@@ -27,7 +27,7 @@ Hippocampus is a local-first memory runtime for coding agents. The current syste
 - Local state lives under `~/.hippocampus` unless `HIPPOCAMPUS_HOME` is set.
 - `hippo init` is the explicit setup path.
 - `hippo mcp serve` is allowed to lazily initialize local state.
-- The default MCP surface is non-destructive. CLI delete is allowed for operator/debug workflows.
+- The default MCP surface allows durable writes and explicit contradiction, but keeps delete off by default. CLI delete is still allowed for operator/debug workflows.
 
 ## Development
 

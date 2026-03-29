@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { MemoryService } from '../memory/memory.service.js'
 import { registerMemoryApplyObservationTool } from './tools/memory-apply-observation.tool.js'
+import { registerMemoryContradictTool } from './tools/memory-contradict.tool.js'
 import { registerMemoryGetHistoryTool } from './tools/memory-get-history.tool.js'
 import { registerMemoryGetTool } from './tools/memory-get.tool.js'
 import { registerMemoryGetPolicyTool } from './tools/memory-get-policy.tool.js'
@@ -19,6 +20,7 @@ export const createMcpServer = (memoryService: MemoryService) => {
   registerMemoryGetPolicyTool(server, memoryService)
   registerMemorySearchTool(server, memoryService)
   registerMemoryApplyObservationTool(server, memoryService)
+  registerMemoryContradictTool(server, memoryService)
   registerMemoryListTool(server, memoryService)
   registerMemoryGetTool(server, memoryService)
   registerMemoryGetHistoryTool(server, memoryService)

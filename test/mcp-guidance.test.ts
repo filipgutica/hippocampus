@@ -99,6 +99,9 @@ describe('MCP guidance resource', () => {
       const policy = JSON.parse(policyText) as {
         guidanceResourceUri: string
         guidanceArtifact: string
+        sourceTypeDefinitions: Array<{ value: string; description: string }>
+        statusDefinitions: Array<{ value: string; description: string }>
+        contradictionRules: string[]
         canonicalPolicy: { uri: string; artifact: string; title: string }
         supportingGuidance: Array<{ uri: string; artifact: string; title: string }>
         resources: Array<{ role: string; uri: string; artifact: string; title: string }>
@@ -132,12 +135,27 @@ describe('MCP guidance resource', () => {
           title: memoryScopeGuidanceResource.title,
         },
       ])
+      expect(policy.sourceTypeDefinitions.map(item => item.value)).toEqual([
+        'explicit_user_statement',
+        'observed_pattern',
+        'tool_observation',
+      ])
+      expect(policy.statusDefinitions.map(item => item.value)).toEqual([
+        'candidate',
+        'active',
+        'suppressed',
+        'archived',
+        'deleted',
+      ])
+      expect(policy.contradictionRules.some(rule => rule.includes('supersededBy'))).toBe(true)
 
       const tools = await client.listTools()
       const searchTool = tools.tools.find(item => item.name === 'memory-search')
       const policyTool = tools.tools.find(item => item.name === 'memory-get-policy')
-      expect(searchTool?.description).toContain('queries should stay narrow')
-      expect(policyTool?.description).toContain('canonical runtime memory policy')
+      const contradictTool = tools.tools.find(item => item.name === 'memory-contradict')
+      expect(searchTool?.description).toContain('only active memories')
+      expect(policyTool?.description).toContain('sourceType and status definitions')
+      expect(contradictTool?.description).toContain('suppress it, and create a new active replacement')
 
       const searchResult = await client.callTool({
         name: 'memory-search',

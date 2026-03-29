@@ -13,6 +13,9 @@ describe('guidance artifacts', () => {
 
     expect(guidance).toContain('# Hippocampus Runtime Memory Policy')
     expect(guidance).toContain('Use this policy first when deciding whether to retrieve or save memory through Hippocampus.')
+    expect(guidance).toContain('## Source Types')
+    expect(guidance).toContain('## Status')
+    expect(guidance).toContain('## Contradiction and supersession')
     expect(runtimeMemoryPolicyResource.artifact).toBe('skills/memory-runtime-policy-skill.md')
     expect(runtimeMemoryPolicyResource.resourceUri).toBe('hippocampus://policy/runtime-memory')
     expect(runtimeMemoryPolicyResource.title).toBe('Hippocampus Runtime Memory Policy')

@@ -8,8 +8,10 @@ Hippocampus currently supports:
 
 - explicit init and lazy init on MCP startup
 - structured memory capture through CLI and MCP
+- explicit memory classification with `sourceType`
 - scoped memory search
 - memory inspection and history
+- contradiction and supersession through MCP
 - soft delete from the CLI for operator/debug workflows
 - runtime policy and supporting guidance delivery through MCP resources
 
@@ -54,6 +56,7 @@ For other MCP-capable clients, configure the same command in the client’s MCP 
 Default MCP surface:
 
 - `memory-apply-observation`
+- `memory-contradict`
 - `memory-search`
 - `memory-list`
 - `memory-get`
@@ -64,7 +67,8 @@ Default MCP surface:
 
 Note:
 
-- destructive deletion is intentionally not exposed on the default MCP surface
+- contradiction is intentionally exposed on the default MCP surface as a controlled mutation
+- destructive deletion is still intentionally not exposed on the default MCP surface
 - CLI delete is kept for operator/debug workflows
 - no extra retrieval tool is exposed in v1; `memory-search` remains the narrow, explicit retrieval primitive
 
@@ -123,7 +127,7 @@ Inspect the SQLite database directly if needed:
 
 ```bash
 sqlite3 /tmp/hippo-dev/hippocampus.db ".tables"
-sqlite3 /tmp/hippo-dev/hippocampus.db "select id, kind, subject, status from memories;"
+sqlite3 /tmp/hippo-dev/hippocampus.db "select id, kind, source_type, subject, status, superseded_by from memories;"
 ```
 
 ## Local CLI Examples
@@ -135,6 +139,7 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js apply \
   --scope-type repo \
   --scope-id /tmp/example-repo \
   --kind preference \
+  --source-type tool_observation \
   --subject "Prefer pnpm" \
   --statement "Use pnpm for this repo."
 ```
@@ -148,6 +153,18 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js search \
   --subject "prefer pnpm" \
   --json
 ```
+
+Fields to expect on stored memories:
+
+- `sourceType`: why the memory exists: `explicit_user_statement`, `observed_pattern`, or `tool_observation`
+- `status`: lifecycle state: `candidate`, `active`, `suppressed`, `archived`, or `deleted`
+- `supersededBy`: id of the direct replacement memory when a memory has been contradicted
+
+Contradict a memory over MCP:
+
+- call `memory-contradict` with the old memory id and a replacement draft
+- Hippocampus suppresses the old memory, creates the new active replacement, and links the old one via `supersededBy`
+- later `memory-get` calls on the old id return the old memory plus `supersededByMemory` so the agent can inspect updated state without another lookup
 
 Inspect and manage stored memories:
 
@@ -164,18 +181,18 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-
 
 ## Current Limitations
 
-- no contradiction workflow
 - no decay workflow
 - no semantic retrieval or embeddings
 - no broader semantic query helper beyond exact scoped retrieval
+- no automatic suppression or archival engine beyond explicit contradiction
 - no bulk reset or hard purge command
 - no published Homebrew formula yet
 
 ## Next
 
-The next active area after this guidance pass is to decide whether runtime retrieval semantics should expand beyond narrow scoped search.
+The next active area is to extend lifecycle management beyond explicit contradiction and bounded promotion.
 
 - Keep `memory-search` as the default retrieval primitive unless a future pass intentionally changes matching behavior.
-- If broader search or query behavior is needed later, evolve it as a deliberate runtime contract change rather than adding a redundant tool on top of the current exact-match search.
+- Add decay, archival, and contradiction-resolution workflows deliberately rather than relying on uncontrolled heuristics.
 
 Hippocampus should continue to own deterministic runtime behavior such as validation, persistence, retrieval, and memory state transitions.

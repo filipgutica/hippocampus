@@ -7,7 +7,7 @@ export const registerMemoryListTool = (server: McpServer, memoryService: MemoryS
     'memory-list',
     {
       description:
-        'Use for orientation or debugging within an explicit scope. Prefer memory-search when a likely kind or subject is already known and broad fishing is unnecessary.',
+        'Use for orientation or debugging within an explicit scope. Prefer memory-search when a likely kind or subject is already known. Normal listing returns only active memories.',
       inputSchema: {
         scope: z.object({
           type: z.enum(['user', 'repo', 'org']),

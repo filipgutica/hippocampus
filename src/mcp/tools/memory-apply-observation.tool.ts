@@ -7,7 +7,7 @@ export const registerMemoryApplyObservationTool = (server: McpServer, memoryServ
     'memory-apply-observation',
     {
       description:
-        'Save only durable scoped observations such as stable preferences, conventions, workflows, or project facts. Choose scope explicitly and avoid transient task notes, one-off debugging state, and duplicate submissions.',
+        'Save only durable scoped observations such as stable preferences, conventions, workflows, or project facts. Choose sourceType explicitly: explicit_user_statement for direct user statements, observed_pattern for repeated inferred behavior, and tool_observation for durable repo/config/tool evidence.',
       inputSchema: {
         scope: z.object({
           type: z.enum(['user', 'repo', 'org']),
@@ -16,6 +16,7 @@ export const registerMemoryApplyObservationTool = (server: McpServer, memoryServ
         kind: z.string().min(1),
         subject: z.string().min(1),
         statement: z.string().min(1),
+        sourceType: z.enum(['explicit_user_statement', 'observed_pattern', 'tool_observation']),
         details: z.string().optional(),
         source: z
           .object({
@@ -32,6 +33,7 @@ export const registerMemoryApplyObservationTool = (server: McpServer, memoryServ
         kind: input.kind,
         subject: input.subject,
         statement: input.statement,
+        sourceType: input.sourceType,
         details: input.details ?? null,
         source: input.source ?? null,
       })

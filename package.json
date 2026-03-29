@@ -13,6 +13,10 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "pack:validate": "pnpm build && node ./scripts/validate-pack.mjs",
+    "smoke:init": "node ./scripts/smoke-init.mjs",
+    "smoke:mcp": "node ./scripts/smoke-mcp.mjs",
+    "start:cli": "node ./dist/index.js",
+    "start:mcp": "node ./dist/index.js mcp serve",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json"
@@ -20,12 +24,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.24.1",
     "better-sqlite3": "^12.2.0",
+    "yargs": "^18.0.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.3.0",
+    "@types/yargs": "^17.0.33",
     "@typescript-eslint/eslint-plugin": "^8.39.1",
     "@typescript-eslint/parser": "^8.39.1",
     "eslint": "^9.33.0",

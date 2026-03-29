@@ -1,4 +1,5 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
+import type { ApplyObservationInput, ObservationSource } from '../dto/apply-observation.dto.js'
 import type { MemoryEventType, MemoryStatus } from '../types/memory.types.js'
 
 export type MemoryRecord = {
@@ -16,6 +17,7 @@ export type MemoryRecord = {
   updatedAt: string
   lastObservedAt: string
   status: MemoryStatus
+  deletedAt: string | null
 }
 
 export type MemoryEventRecord = {
@@ -29,4 +31,9 @@ export type MemoryEventRecord = {
   sourceJson: string | null
   reason: string
   createdAt: string
+}
+
+export type ParsedMemoryEventRecord = Omit<MemoryEventRecord, 'observationJson' | 'sourceJson'> & {
+  observation: ApplyObservationInput | null
+  source: ObservationSource | null
 }

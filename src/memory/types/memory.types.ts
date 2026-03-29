@@ -1,6 +1,6 @@
-export type MemoryStatus = 'active'
+export type MemoryStatus = 'active' | 'deleted'
 
-export type MemoryEventType = 'created' | 'reinforced' | 'rejected'
+export type MemoryEventType = 'created' | 'reinforced' | 'rejected' | 'deleted'
 
 export type ApplyMemoryDecision =
   | { decision: 'reject'; reason: string; policyVersion: string }

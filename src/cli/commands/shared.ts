@@ -2,14 +2,18 @@ import fs from 'node:fs'
 import { resolveRepoScopeId } from '../../repos/types.js'
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../../memory/dto/apply-observation.dto.js'
+import type { InitResult } from '../../app/init.service.js'
+import type { ApplyMemoryResult, DeleteMemoryResult, MemoryHistoryResult, MemoryListResult, SearchResult } from '../../memory/models/memory-result.js'
+import type { GetPolicyResult } from '../../memory/dto/get-policy.dto.js'
+import type { MemoryRecord } from '../../memory/models/memory-record.js'
 
 export type CliResult = {
   code: number
 }
 
 export type CliIO = {
-  stdout: NodeJS.WriteStream
-  stderr: NodeJS.WriteStream
+  stdout: NodeJS.WritableStream
+  stderr: NodeJS.WritableStream
 }
 
 export const parseArgValue = (argv: string[], name: string): string | undefined => {
@@ -76,3 +80,122 @@ export const writeOutput = (io: CliIO, payload: unknown, json = false): void => 
 
 export const resolveObservationSource = (input: Partial<ApplyObservationInput>): ApplyObservationInput['source'] =>
   input.source ?? null
+
+const formatMemory = (memory: MemoryRecord): string =>
+  [
+    `id: ${memory.id}`,
+    `scope: ${memory.scope.type}:${memory.scope.id}`,
+    `kind: ${memory.kind}`,
+    `subject: ${memory.subject}`,
+    `subjectKey: ${memory.subjectKey}`,
+    `statement: ${memory.statement}`,
+    `details: ${memory.details ?? '-'}`,
+    `confidence: ${memory.confidence}`,
+    `reinforcementCount: ${memory.reinforcementCount}`,
+    `policyVersion: ${memory.policyVersion}`,
+    `status: ${memory.status}`,
+    `createdAt: ${memory.createdAt}`,
+    `updatedAt: ${memory.updatedAt}`,
+    `lastObservedAt: ${memory.lastObservedAt}`,
+    `deletedAt: ${memory.deletedAt ?? '-'}`,
+  ].join('\n')
+
+export const formatInitResult = (result: InitResult): string =>
+  [
+    result.initialized ? 'Hippocampus initialized.' : 'Hippocampus already initialized.',
+    `home: ${result.paths.home}`,
+    `configFile: ${result.paths.configFile}`,
+    `dbFile: ${result.config.dbFile}`,
+  ].join('\n')
+
+export const formatApplyResult = (result: ApplyMemoryResult): string => {
+  if (result.decision === 'reject') {
+    return [`decision: reject`, `reason: ${result.reason}`, `policyVersion: ${result.policyVersion}`].join('\n')
+  }
+
+  if (!('memory' in result)) {
+    return [`decision: ${result.decision}`, `reason: ${result.reason}`, `policyVersion: ${result.policyVersion}`].join(
+      '\n',
+    )
+  }
+
+  return [
+    `decision: ${result.decision}`,
+    `reason: ${result.reason}`,
+    `policyVersion: ${result.policyVersion}`,
+    '',
+    formatMemory(result.memory),
+  ].join('\n')
+}
+
+const formatMemoryCollection = (result: SearchResult | MemoryListResult): string => {
+  if (result.items.length === 0) {
+    return `total: ${result.total}\nitems: none`
+  }
+
+  return [
+    `total: ${result.total}`,
+    '',
+    ...result.items.map((memory, index) => [`[${index + 1}]`, formatMemory(memory)].join('\n')),
+  ].join('\n\n')
+}
+
+export const formatSearchResult = (result: SearchResult): string => formatMemoryCollection(result)
+
+export const formatMemoryListResult = (result: MemoryListResult): string => formatMemoryCollection(result)
+
+export const formatMemoryHistoryResult = (result: MemoryHistoryResult): string => {
+  if (result.items.length === 0) {
+    return `total: ${result.total}\nevents: none`
+  }
+
+  return [
+    `total: ${result.total}`,
+    '',
+    ...result.items.map((event, index) =>
+      [
+        `[${index + 1}]`,
+        `id: ${event.id}`,
+        `memoryId: ${event.memoryId ?? '-'}`,
+        `eventType: ${event.eventType}`,
+        `scope: ${event.scope.type}:${event.scope.id}`,
+        `kind: ${event.kind}`,
+        `subjectKey: ${event.subjectKey}`,
+        `reason: ${event.reason}`,
+        `createdAt: ${event.createdAt}`,
+        `observation: ${JSON.stringify(event.observation, null, 2)}`,
+        `source: ${JSON.stringify(event.source, null, 2)}`,
+      ].join('\n'),
+    ),
+  ].join('\n\n')
+}
+
+export const formatDeleteMemoryResult = (result: DeleteMemoryResult): string =>
+  [
+    'memory deleted.',
+    '',
+    formatMemory(result.memory),
+    '',
+    `deleteEventId: ${result.event.id}`,
+    `deleteReason: ${result.event.reason}`,
+  ].join('\n')
+
+export const formatPolicyResult = (result: GetPolicyResult): string =>
+  [
+    `policyVersion: ${result.policyVersion}`,
+    `description: ${result.description}`,
+    '',
+    'acceptanceRules:',
+    ...result.acceptanceRules.map(rule => `- ${rule}`),
+    '',
+    'matchingRules:',
+    ...result.matchingRules.map(rule => `- ${rule}`),
+    '',
+    'rankingRules:',
+    ...result.rankingRules.map(rule => `- ${rule}`),
+    '',
+    `guidanceResourceUri: ${result.guidanceResourceUri}`,
+    `guidanceArtifact: ${result.guidanceArtifact}`,
+  ].join('\n')
+
+export const formatMemoryRecord = (memory: MemoryRecord): string => formatMemory(memory)

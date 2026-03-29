@@ -1,66 +1,349 @@
-import { buildApp } from '../app/build-app.js'
+import yargs from 'yargs'
+import { buildApp, type RuntimeApp } from '../app/build-app.js'
+import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
+import type { ApplyObservationInput } from '../memory/dto/apply-observation.dto.js'
+import { resolveRepoScopeId } from '../repos/types.js'
 import { runApplyCommand } from './commands/apply.command.js'
 import { runGetPolicyCommand } from './commands/get-policy.command.js'
 import { runInitCommand } from './commands/init.command.js'
 import { runMcpServeCommand } from './commands/mcp-serve.command.js'
+import { runMemoriesDeleteCommand } from './commands/memories-delete.command.js'
+import { runMemoriesHistoryCommand } from './commands/memories-history.command.js'
+import { runMemoriesInspectCommand } from './commands/memories-inspect.command.js'
+import { runMemoriesListCommand } from './commands/memories-list.command.js'
 import { runSearchCommand } from './commands/search.command.js'
-import { hasFlag, writeOutput, type CliIO, type CliResult } from './commands/shared.js'
+import { readJsonInput, resolveObservationSource, writeOutput, type CliIO, type CliResult } from './commands/shared.js'
 
-export const runCli = async (argv: string[], io: CliIO = { stdout: process.stdout, stderr: process.stderr }): Promise<CliResult> => {
-  const [command, subcommand] = argv
+type JsonOption = {
+  json?: boolean
+}
 
-  if (!command || hasFlag(argv, '--help')) {
-    writeOutput(
-      io,
-      [
-        'hippo init',
-        'hippo apply',
-        'hippo search',
-        'hippo get-policy',
-        'hippo mcp serve',
-      ].join('\n'),
-      false,
-    )
-    return { code: 0 }
+type ScopeArgs = {
+  scopeType?: ScopeType
+  scopeId?: string
+}
+
+type ApplyArgs = ScopeArgs &
+  JsonOption & {
+    kind?: string
+    subject?: string
+    statement?: string
+    details?: string
+    input?: string
+    inputFile?: string
   }
 
-  if (command === 'mcp' && subcommand === 'serve') {
-    const app = await buildApp({ mode: 'runtime', allowLazyInit: true })
-    if (app.mode !== 'runtime') {
-      throw new Error('Expected runtime app container.')
-    }
-    return runMcpServeCommand(app)
-  }
+// eslint-disable-next-line no-unused-vars
+type RuntimeAppHandler = (app: RuntimeApp) => Promise<CliResult>
 
-  if (command === 'init') {
-    const app = await buildApp({ mode: 'init' })
-    if (app.mode !== 'init') {
-      throw new Error('Expected init app container.')
-    }
-    return runInitCommand(app, io)
-  }
-
+const buildRuntimeApp = async (): Promise<RuntimeApp> => {
   const app = await buildApp({ mode: 'runtime', allowLazyInit: false })
   if (app.mode !== 'runtime') {
     throw new Error('Expected runtime app container.')
   }
-  try {
-    if (command === 'apply') {
-      return runApplyCommand(app, argv.slice(1), io)
-    }
 
-    if (command === 'search') {
-      return runSearchCommand(app, argv.slice(1), io)
-    }
+  return app
+}
 
-    if (command === 'get-policy') {
-      return runGetPolicyCommand(app, io)
-    }
+const resolveScope = ({ scopeType, scopeId }: ScopeArgs): ScopeRef => {
+  const type = scopeType ?? 'repo'
+  const id = type === 'repo' ? scopeId ?? resolveRepoScopeId(process.cwd()) : scopeId
 
-    throw new Error(`Unknown command: ${command}`)
-  } finally {
-    if (app.mode === 'runtime') {
+  if (!id) {
+    throw new Error(`Missing --scope-id for scope type ${type}.`)
+  }
+
+  return {
+    type,
+    id,
+  }
+}
+
+const loadApplyInput = (args: ApplyArgs, argv: string[]): ApplyObservationInput => {
+  const parsedInput = readJsonInput([
+    ...argv,
+    ...(args.input ? ['--input', args.input] : []),
+    ...(args.inputFile ? ['--input-file', args.inputFile] : []),
+  ]) as Partial<ApplyObservationInput>
+
+  return {
+    scope: parsedInput.scope ?? resolveScope(args),
+    kind: parsedInput.kind ?? args.kind ?? '',
+    subject: parsedInput.subject ?? args.subject ?? '',
+    statement: parsedInput.statement ?? args.statement ?? '',
+    details: parsedInput.details ?? args.details ?? null,
+    source: resolveObservationSource(parsedInput) ?? { channel: 'cli' },
+  }
+}
+
+const createParser = (argv: string[], io: CliIO) => {
+  let result: CliResult = { code: 0 }
+
+  const withRuntimeApp = async (handler: RuntimeAppHandler): Promise<void> => {
+    const app = await buildRuntimeApp()
+
+    try {
+      result = await handler(app)
+    } finally {
       app.close()
     }
   }
+
+  const parser = yargs(argv)
+    .scriptName('hippo')
+    .strict()
+    .help()
+    .exitProcess(false)
+    .recommendCommands()
+    .fail((message, error) => {
+      throw error ?? new Error(message)
+    })
+    .command({
+      command: 'init',
+      describe: 'Initialize local Hippocampus state.',
+      builder: parser =>
+        parser.option('json', {
+          type: 'boolean',
+          default: false,
+        }),
+      handler: async args => {
+        const app = await buildApp({ mode: 'init' })
+        if (app.mode !== 'init') {
+          throw new Error('Expected init app container.')
+        }
+
+        result = await runInitCommand(app, io, args.json ?? false)
+      },
+    })
+    .command({
+      command: 'apply',
+      describe: 'Apply a structured observation to the memory workflow.',
+      builder: parser =>
+        parser
+          .option('scope-type', {
+            type: 'string',
+            choices: ['user', 'repo', 'org'] as const,
+          })
+          .option('scope-id', {
+            type: 'string',
+          })
+          .option('kind', {
+            type: 'string',
+          })
+          .option('subject', {
+            type: 'string',
+          })
+          .option('statement', {
+            type: 'string',
+          })
+          .option('details', {
+            type: 'string',
+          })
+          .option('input', {
+            type: 'string',
+          })
+          .option('input-file', {
+            type: 'string',
+          })
+          .option('json', {
+            type: 'boolean',
+            default: false,
+          }),
+      handler: async args => {
+        await withRuntimeApp(app => runApplyCommand(app, loadApplyInput(args, argv), io, args.json ?? false))
+      },
+    })
+    .command({
+      command: 'search',
+      describe: 'Search active memories within a scope.',
+      builder: parser =>
+        parser
+          .option('scope-type', {
+            type: 'string',
+            choices: ['user', 'repo', 'org'] as const,
+          })
+          .option('scope-id', {
+            type: 'string',
+          })
+          .option('kind', {
+            type: 'string',
+          })
+          .option('subject', {
+            type: 'string',
+          })
+          .option('limit', {
+            type: 'number',
+          })
+          .option('json', {
+            type: 'boolean',
+            default: false,
+          }),
+      handler: async args => {
+        await withRuntimeApp(
+          app =>
+            runSearchCommand(
+              app,
+              {
+                scope: resolveScope(args),
+                kind: args.kind ?? null,
+                subject: args.subject ?? null,
+                limit: args.limit ?? null,
+              },
+              io,
+              args.json ?? false,
+            ),
+        )
+      },
+    })
+    .command({
+      command: 'get-policy',
+      describe: 'Return the current effective policy and guidance references.',
+      builder: parser =>
+        parser.option('json', {
+          type: 'boolean',
+          default: false,
+        }),
+      handler: async args => {
+        await withRuntimeApp(app => runGetPolicyCommand(app, io, args.json ?? false))
+      },
+    })
+    .command({
+      command: 'mcp serve',
+      describe: 'Start the local MCP stdio server.',
+      handler: async () => {
+        const app = await buildApp({ mode: 'runtime', allowLazyInit: true })
+        if (app.mode !== 'runtime') {
+          throw new Error('Expected runtime app container.')
+        }
+
+        result = await runMcpServeCommand(app)
+      },
+    })
+    .command({
+      command: 'memories <command>',
+      describe: 'Inspect and manage stored memories.',
+      builder: parser =>
+        parser
+          .demandCommand(1)
+          .command({
+            command: 'list',
+            describe: 'List active memories in a scope.',
+            builder: commandParser =>
+              commandParser
+                .option('scope-type', {
+                  type: 'string',
+                  choices: ['user', 'repo', 'org'] as const,
+                })
+                .option('scope-id', {
+                  type: 'string',
+                })
+                .option('kind', {
+                  type: 'string',
+                })
+                .option('limit', {
+                  type: 'number',
+                })
+                .option('json', {
+                  type: 'boolean',
+                  default: false,
+                }),
+            handler: async args => {
+              await withRuntimeApp(app =>
+                runMemoriesListCommand(
+                  app,
+                  {
+                    scope: resolveScope({
+                      scopeType: args.scopeType as ScopeType | undefined,
+                      scopeId: typeof args.scopeId === 'string' ? args.scopeId : undefined,
+                    }),
+                    kind: typeof args.kind === 'string' ? args.kind : null,
+                    limit: typeof args.limit === 'number' ? args.limit : null,
+                  },
+                  io,
+                  Boolean(args.json),
+                ),
+              )
+            },
+          })
+          .command({
+            command: 'inspect',
+            describe: 'Inspect a single memory by id.',
+            builder: commandParser =>
+              commandParser
+                .option('id', {
+                  type: 'string',
+                  demandOption: true,
+                })
+                .option('json', {
+                  type: 'boolean',
+                  default: false,
+                }),
+            handler: async args => {
+              await withRuntimeApp(app =>
+                runMemoriesInspectCommand(app, { id: String(args.id) }, io, Boolean(args.json)),
+              )
+            },
+          })
+          .command({
+            command: 'history',
+            describe: 'Show the event history for a memory.',
+            builder: commandParser =>
+              commandParser
+                .option('id', {
+                  type: 'string',
+                  demandOption: true,
+                })
+                .option('json', {
+                  type: 'boolean',
+                  default: false,
+                }),
+            handler: async args => {
+              await withRuntimeApp(app =>
+                runMemoriesHistoryCommand(app, { id: String(args.id) }, io, Boolean(args.json)),
+              )
+            },
+          })
+          .command({
+            command: 'delete',
+            describe: 'Soft delete a memory by id.',
+            builder: commandParser =>
+              commandParser
+                .option('id', {
+                  type: 'string',
+                  demandOption: true,
+                })
+                .option('json', {
+                  type: 'boolean',
+                  default: false,
+                }),
+            handler: async args => {
+              await withRuntimeApp(app =>
+                runMemoriesDeleteCommand(
+                  app,
+                  { id: String(args.id), source: { channel: 'cli' } },
+                  io,
+                  Boolean(args.json),
+                ),
+              )
+            },
+          }),
+      handler: () => undefined,
+    })
+
+  return { parser, getResult: () => result }
+}
+
+export const runCli = async (
+  argv: string[],
+  io: CliIO = { stdout: process.stdout, stderr: process.stderr },
+): Promise<CliResult> => {
+  const { parser, getResult } = createParser(argv, io)
+
+  if (argv.length === 0) {
+    writeOutput(io, parser.getHelp(), false)
+    return { code: 0 }
+  }
+
+  await parser.parseAsync()
+  return getResult()
 }

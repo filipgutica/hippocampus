@@ -62,6 +62,23 @@ export const migrations: Migration[] = [
         ON memory_events(scope_type, scope_id, created_at DESC);
     `,
   },
+  {
+    version: 2,
+    name: 'memory_soft_delete',
+    up: `
+      ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+      ALTER TABLE memories ADD COLUMN deleted_at TEXT;
+
+      DROP INDEX IF EXISTS idx_memories_scope_kind_subject;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_active_scope_kind_subject
+        ON memories(scope_type, scope_id, kind, subject_key)
+        WHERE status = 'active';
+
+      DROP INDEX IF EXISTS idx_memories_scope_kind;
+      CREATE INDEX IF NOT EXISTS idx_memories_status_scope_kind
+        ON memories(status, scope_type, scope_id, kind);
+    `,
+  },
 ]
 
 export const runMigrations = (db: InstanceType<typeof Database>): void => {

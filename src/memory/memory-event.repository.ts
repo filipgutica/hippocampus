@@ -11,11 +11,41 @@ type EventInsertInput = {
   scope: ScopeRef
   kind: string
   subjectKey: string
-  observation: ApplyObservationInput
+  observation?: ApplyObservationInput | null
   source?: ObservationSource | null
   reason: string
   now: string
 }
+
+type EventRow = {
+  id: string
+  memory_id: string | null
+  event_type: MemoryEventType
+  scope_type: ScopeRef['type']
+  scope_id: string
+  kind: string
+  subject_key: string
+  observation_json: string
+  source_json: string | null
+  reason: string
+  created_at: string
+}
+
+const toRecord = (row: EventRow): MemoryEventRecord => ({
+  id: row.id,
+  memoryId: row.memory_id,
+  eventType: row.event_type,
+  scope: {
+    type: row.scope_type,
+    id: row.scope_id,
+  },
+  kind: row.kind,
+  subjectKey: row.subject_key,
+  observationJson: row.observation_json,
+  sourceJson: row.source_json,
+  reason: row.reason,
+  createdAt: row.created_at,
+})
 
 export class MemoryEventRepository {
   private readonly db: InstanceType<typeof Database>
@@ -26,7 +56,7 @@ export class MemoryEventRepository {
 
   insert(input: EventInsertInput): MemoryEventRecord {
     const id = randomUUID()
-    const observationJson = JSON.stringify(input.observation)
+    const observationJson = JSON.stringify(input.observation ?? null)
     const sourceJson = input.source ? JSON.stringify(input.source) : null
 
     this.db
@@ -64,5 +94,20 @@ export class MemoryEventRepository {
       reason: input.reason,
       createdAt: input.now,
     }
+  }
+
+  listByMemoryId(memoryId: string): MemoryEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT *
+          FROM memory_events
+          WHERE memory_id = ?
+          ORDER BY created_at ASC
+        `,
+      )
+      .all(memoryId) as EventRow[]
+
+    return rows.map(toRecord)
   }
 }

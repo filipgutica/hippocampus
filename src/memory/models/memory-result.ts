@@ -1,6 +1,6 @@
 import type { GetPolicyResult } from '../dto/get-policy.dto.js'
 import type { ApplyMemoryDecision } from '../types/memory.types.js'
-import type { MemoryRecord } from './memory-record.js'
+import type { MemoryRecord, ParsedMemoryEventRecord } from './memory-record.js'
 
 export type ApplyMemoryResult =
   | ApplyMemoryDecision
@@ -10,6 +10,21 @@ export type ApplyMemoryResult =
 export type SearchResult = {
   items: MemoryRecord[]
   total: number
+}
+
+export type MemoryListResult = {
+  items: MemoryRecord[]
+  total: number
+}
+
+export type MemoryHistoryResult = {
+  items: ParsedMemoryEventRecord[]
+  total: number
+}
+
+export type DeleteMemoryResult = {
+  memory: MemoryRecord
+  event: ParsedMemoryEventRecord
 }
 
 export type { GetPolicyResult }

@@ -1,0 +1,7 @@
+dist
+node_modules
+.DS_Store
+*.db
+*.sqlite
+*.sqlite-journal
+coverage

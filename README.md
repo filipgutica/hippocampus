@@ -11,7 +11,7 @@ Hippocampus currently supports:
 - scoped memory search
 - memory inspection and history
 - soft delete from the CLI for operator/debug workflows
-- guidance delivery through an MCP resource
+- runtime policy and supporting guidance delivery through MCP resources
 
 Local state lives in `~/.hippocampus` by default. Set `HIPPOCAMPUS_HOME` to use a different location.
 
@@ -59,12 +59,21 @@ Default MCP surface:
 - `memory-get`
 - `memory-get-history`
 - `memory-get-policy`
+- `hippocampus://policy/runtime-memory`
 - `hippocampus://skills/memory-scope`
 
 Note:
 
 - destructive deletion is intentionally not exposed on the default MCP surface
 - CLI delete is kept for operator/debug workflows
+- no extra retrieval tool is exposed in v1; `memory-search` remains the narrow, explicit retrieval primitive
+
+Policy discovery flow:
+
+- call `memory-get-policy` first to discover canonical and supporting guidance resources
+- read `hippocampus://policy/runtime-memory` for runtime usage guidance
+- read `hippocampus://skills/memory-scope` for scope selection guidance
+- rely on MCP tool descriptions to reinforce when to search, list, inspect, or save
 
 ## Local Development
 
@@ -158,16 +167,15 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-
 - no contradiction workflow
 - no decay workflow
 - no semantic retrieval or embeddings
+- no broader semantic query helper beyond exact scoped retrieval
 - no bulk reset or hard purge command
 - no published Homebrew formula yet
 
 ## Next
 
-The next step is to make the memory policy easier for agents to use correctly through:
+The next active area after this guidance pass is to decide whether runtime retrieval semantics should expand beyond narrow scoped search.
 
-- additional agent-facing skills and resources
-- improved MCP tool descriptions
-
-The goal is to improve how agents understand when and how to store, retrieve, and classify memories without pushing more inference into Hippocampus itself.
+- Keep `memory-search` as the default retrieval primitive unless a future pass intentionally changes matching behavior.
+- If broader search or query behavior is needed later, evolve it as a deliberate runtime contract change rather than adding a redundant tool on top of the current exact-match search.
 
 Hippocampus should continue to own deterministic runtime behavior such as validation, persistence, retrieval, and memory state transitions.

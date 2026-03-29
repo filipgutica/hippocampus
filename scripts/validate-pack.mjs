@@ -27,6 +27,10 @@ try {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
+  if (!tarEntries.split('\n').includes('package/skills/memory-runtime-policy-skill.md')) {
+    throw new Error('Packed artifact is missing package/skills/memory-runtime-policy-skill.md.')
+  }
+
   if (!tarEntries.split('\n').includes('package/skills/memory-scope-skill.md')) {
     throw new Error('Packed artifact is missing package/skills/memory-scope-skill.md.')
   }
@@ -40,7 +44,7 @@ try {
     'package',
     'dist',
     'guidance',
-    'memory-scope-guidance.js',
+    'guidance-catalog.js',
   )
 
   if (!fs.existsSync(packagedModulePath)) {
@@ -48,9 +52,15 @@ try {
   }
 
   const packagedModule = await import(pathToFileURL(packagedModulePath).href)
-  const guidance = packagedModule.readMemoryScopeGuidance()
+  const runtimePolicy = packagedModule.readGuidanceArtifact(packagedModule.runtimeMemoryPolicyResource)
 
-  if (typeof guidance !== 'string' || !guidance.includes('# Hippocampus Memory Scope Skill')) {
+  if (typeof runtimePolicy !== 'string' || !runtimePolicy.includes('# Hippocampus Runtime Memory Policy')) {
+    throw new Error('Packed guidance resolver did not return the shipped runtime memory policy content.')
+  }
+
+  const guidance = packagedModule.readGuidanceArtifact(packagedModule.memoryScopeGuidanceResource)
+
+  if (typeof guidance !== 'string' || !guidance.includes('# Hippocampus Memory Scope Guidance')) {
     throw new Error('Packed guidance resolver did not return the shipped memory-scope guidance content.')
   }
 } finally {

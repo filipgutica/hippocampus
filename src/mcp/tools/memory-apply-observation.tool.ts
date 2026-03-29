@@ -6,7 +6,8 @@ export const registerMemoryApplyObservationTool = (server: McpServer, memoryServ
   server.registerTool(
     'memory-apply-observation',
     {
-      description: 'Apply a structured observation to the memory workflow.',
+      description:
+        'Save only durable scoped observations such as stable preferences, conventions, workflows, or project facts. Choose scope explicitly and avoid transient task notes, one-off debugging state, and duplicate submissions.',
       inputSchema: {
         scope: z.object({
           type: z.enum(['user', 'repo', 'org']),

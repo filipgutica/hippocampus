@@ -1,21 +1,44 @@
 import { describe, expect, it } from 'vitest'
 import {
-  guidanceArtifact,
-  guidanceMimeType,
-  guidanceResourceUri,
-  guidanceTitle,
-  readMemoryScopeGuidance,
-} from '../src/guidance/memory-scope-guidance.js'
+  GuidanceAssetMissingError,
+  guidanceCatalog,
+  memoryScopeGuidanceResource,
+  readGuidanceArtifact,
+  runtimeMemoryPolicyResource,
+} from '../src/guidance/guidance-catalog.js'
 
-describe('memory-scope guidance', () => {
-  it('loads the shipped markdown artifact', () => {
-    const guidance = readMemoryScopeGuidance()
+describe('guidance artifacts', () => {
+  it('loads the shipped runtime policy artifact', () => {
+    const guidance = readGuidanceArtifact(runtimeMemoryPolicyResource)
 
-    expect(guidance).toContain('# Hippocampus Memory Scope Skill')
-    expect(guidance).toContain('Use this guidance before submitting an observation to Hippocampus.')
-    expect(guidanceArtifact).toBe('skills/memory-scope-skill.md')
-    expect(guidanceResourceUri).toBe('hippocampus://skills/memory-scope')
-    expect(guidanceTitle).toBe('Hippocampus Memory Scope Skill')
-    expect(guidanceMimeType).toBe('text/markdown')
+    expect(guidance).toContain('# Hippocampus Runtime Memory Policy')
+    expect(guidance).toContain('Use this policy first when deciding whether to retrieve or save memory through Hippocampus.')
+    expect(runtimeMemoryPolicyResource.artifact).toBe('skills/memory-runtime-policy-skill.md')
+    expect(runtimeMemoryPolicyResource.resourceUri).toBe('hippocampus://policy/runtime-memory')
+    expect(runtimeMemoryPolicyResource.title).toBe('Hippocampus Runtime Memory Policy')
+    expect(runtimeMemoryPolicyResource.description).toContain('Canonical runtime guidance')
+    expect(runtimeMemoryPolicyResource.mimeType).toBe('text/markdown')
+  })
+
+  it('loads the shipped supporting scope guidance artifact', () => {
+    const guidance = readGuidanceArtifact(memoryScopeGuidanceResource)
+
+    expect(guidance).toContain('# Hippocampus Memory Scope Guidance')
+    expect(guidance).toContain('Use this supporting guidance after reading the canonical runtime policy')
+    expect(memoryScopeGuidanceResource.artifact).toBe('skills/memory-scope-skill.md')
+    expect(memoryScopeGuidanceResource.resourceUri).toBe('hippocampus://skills/memory-scope')
+    expect(memoryScopeGuidanceResource.title).toBe('Hippocampus Memory Scope Guidance')
+    expect(memoryScopeGuidanceResource.description).toContain('Supporting guidance for choosing repo, user, or org scope')
+    expect(memoryScopeGuidanceResource.mimeType).toBe('text/markdown')
+  })
+
+  it('exports a shared guidance catalog', () => {
+    expect(guidanceCatalog).toEqual([runtimeMemoryPolicyResource, memoryScopeGuidanceResource])
+  })
+
+  it('exports the shared guidance error type', () => {
+    const error = new GuidanceAssetMissingError('missing')
+
+    expect(error.code).toBe('GUIDANCE_ASSET_MISSING')
   })
 })

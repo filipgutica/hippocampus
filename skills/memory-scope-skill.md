@@ -1,34 +1,31 @@
-# Hippocampus Memory Scope Skill
+# Hippocampus Memory Scope Guidance
 
-Use this guidance before submitting an observation to Hippocampus.
-
-## Save only durable memories
-- Save information that is likely to matter again later.
-- Save preferences, conventions, recurring workflow details, and stable project facts.
-- Do not save task-local state, ephemeral debugging notes, or one-off instructions.
+Use this supporting guidance after reading the canonical runtime policy at `hippocampus://policy/runtime-memory`.
 
 ## Choose scope explicitly
-- Use `repo` scope for project-specific facts, conventions, and workflows tied to the current codebase.
-- Use `user` scope for preferences and durable habits that apply across projects.
-- Use `org` scope only when the fact truly belongs to a broader organization context.
-- Do not ask Hippocampus to infer scope for you when the choice is clear from context.
+- Use `repo` scope for conventions, workflows, and stable facts tied to one repository.
+- Use `user` scope for durable personal preferences or habits that should carry across repositories.
+- Use `org` scope only when the fact clearly belongs to a shared organizational context.
+- Do not ask Hippocampus to infer scope when the right scope is already clear from context.
 
 ## Think like AGENTS.md
-- Treat repo scope like a repo-local `AGENTS.md`.
-- Treat user scope like a global `AGENTS.md`.
+- Treat `repo` scope like a repo-local `AGENTS.md`.
+- Treat `user` scope like a global `AGENTS.md`.
+- Treat `org` scope like shared guidance that should apply across related repos or teams.
 - Prefer the narrowest scope that will still be useful later.
 
-## Good candidates
-- "This repository uses pnpm."
-- "The user prefers concise implementation plans."
-- "This project stores local state in `~/.hippocampus`."
+## Durable examples by scope
+- Repo: `This repository uses pnpm.`
+- Repo: `Local state for this project lives in ~/.hippocampus by default.`
+- User: `The user prefers concise implementation plans.`
+- Org: `This organization standardizes on a shared release workflow across repos.`
 
-## Bad candidates
-- "We are debugging this one failing test right now."
-- "The current branch name is feature/foo."
-- "I just opened file X ten seconds ago."
+## Scope mistakes to avoid
+- Do not put repo-only conventions into `user` scope.
+- Do not put one person’s preference into `org` scope.
+- Do not save task-local or rapidly changing notes in any scope.
 
 ## Before saving
 - Ask whether the fact is likely to remain useful.
-- Ask whether it should be scoped to a repo or to the user.
-- If the answer is uncertain, do not save it yet.
+- Ask which scope will make it reusable without leaking into unrelated work.
+- If the right scope is unclear, wait rather than saving it too broadly.

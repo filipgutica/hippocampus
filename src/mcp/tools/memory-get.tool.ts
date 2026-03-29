@@ -6,7 +6,7 @@ export const registerMemoryGetTool = (server: McpServer, memoryService: MemorySe
   server.registerTool(
     'memory-get',
     {
-      description: 'Inspect a stored memory by id.',
+      description: 'Inspect a known memory by id after discovery through search or list.',
       inputSchema: {
         id: z.string().min(1),
       },

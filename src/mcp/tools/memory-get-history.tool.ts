@@ -6,7 +6,7 @@ export const registerMemoryGetHistoryTool = (server: McpServer, memoryService: M
   server.registerTool(
     'memory-get-history',
     {
-      description: 'Return the ordered event history for a stored memory.',
+      description: 'Audit or debug how a known memory evolved over time. This is not the normal retrieval path for deciding the next action.',
       inputSchema: {
         id: z.string().min(1),
       },

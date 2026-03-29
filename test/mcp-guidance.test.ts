@@ -5,7 +5,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildApp } from '../src/app/build-app.js'
-import { guidanceMimeType, guidanceResourceUri, guidanceTitle } from '../src/guidance/memory-scope-guidance.js'
+import {
+  memoryScopeGuidanceResource,
+  runtimeMemoryPolicyResource,
+} from '../src/guidance/guidance-catalog.js'
 import { createMcpServer } from '../src/mcp/server.js'
 
 const tempDirs: string[] = []
@@ -57,32 +60,84 @@ describe('MCP guidance resource', () => {
       await client.connect(clientTransport)
 
       const resources = await client.listResources()
-      const resource = resources.resources.find(item => item.uri === guidanceResourceUri)
+      const runtimeResource = resources.resources.find(item => item.uri === runtimeMemoryPolicyResource.resourceUri)
+      const scopeResource = resources.resources.find(item => item.uri === memoryScopeGuidanceResource.resourceUri)
 
-      expect(resource).toBeDefined()
-      expect(resource?.title).toBe(guidanceTitle)
-      expect(resource?.mimeType).toBe(guidanceMimeType)
+      expect(runtimeResource).toBeDefined()
+      expect(runtimeResource?.title).toBe(runtimeMemoryPolicyResource.title)
+      expect(runtimeResource?.description).toBe(runtimeMemoryPolicyResource.description)
+      expect(runtimeResource?.mimeType).toBe(runtimeMemoryPolicyResource.mimeType)
+      expect(scopeResource).toBeDefined()
+      expect(scopeResource?.title).toBe(memoryScopeGuidanceResource.title)
+      expect(scopeResource?.description).toBe(memoryScopeGuidanceResource.description)
+      expect(scopeResource?.mimeType).toBe(memoryScopeGuidanceResource.mimeType)
 
-      const read = await client.readResource({ uri: guidanceResourceUri })
-      expect(read.contents[0]?.uri).toBe(guidanceResourceUri)
+      const runtimeRead = await client.readResource({ uri: runtimeMemoryPolicyResource.resourceUri })
+      expect(runtimeRead.contents[0]?.uri).toBe(runtimeMemoryPolicyResource.resourceUri)
+      expect(runtimeRead.contents[0]).toMatchObject({
+        uri: runtimeMemoryPolicyResource.resourceUri,
+        mimeType: runtimeMemoryPolicyResource.mimeType,
+      })
+      expect(runtimeRead.contents[0] && 'text' in runtimeRead.contents[0] ? runtimeRead.contents[0].text : '').toContain(
+        '# Hippocampus Runtime Memory Policy',
+      )
+
+      const read = await client.readResource({ uri: memoryScopeGuidanceResource.resourceUri })
+      expect(read.contents[0]?.uri).toBe(memoryScopeGuidanceResource.resourceUri)
       expect(read.contents[0]).toMatchObject({
-        uri: guidanceResourceUri,
-        mimeType: guidanceMimeType,
+        uri: memoryScopeGuidanceResource.resourceUri,
+        mimeType: memoryScopeGuidanceResource.mimeType,
       })
       expect(read.contents[0] && 'text' in read.contents[0] ? read.contents[0].text : '').toContain(
-        '# Hippocampus Memory Scope Skill',
+        '# Hippocampus Memory Scope Guidance',
       )
 
       const policyResult = await client.callTool({
         name: 'memory-get-policy',
       })
       const policyText = getFirstTextContent(policyResult.content)
-      const policy = JSON.parse(policyText) as { guidanceResourceUri: string }
+      const policy = JSON.parse(policyText) as {
+        guidanceResourceUri: string
+        guidanceArtifact: string
+        canonicalPolicy: { uri: string; artifact: string; title: string }
+        supportingGuidance: Array<{ uri: string; artifact: string; title: string }>
+        resources: Array<{ role: string; uri: string; artifact: string; title: string }>
+      }
 
-      expect(policy.guidanceResourceUri).toBe(guidanceResourceUri)
+      expect(policy.guidanceResourceUri).toBe(runtimeMemoryPolicyResource.resourceUri)
+      expect(policy.guidanceArtifact).toBe(runtimeMemoryPolicyResource.artifact)
+      expect(policy.canonicalPolicy).toEqual({
+        uri: runtimeMemoryPolicyResource.resourceUri,
+        artifact: runtimeMemoryPolicyResource.artifact,
+        title: runtimeMemoryPolicyResource.title,
+      })
+      expect(policy.supportingGuidance).toEqual([
+        {
+          uri: memoryScopeGuidanceResource.resourceUri,
+          artifact: memoryScopeGuidanceResource.artifact,
+          title: memoryScopeGuidanceResource.title,
+        },
+      ])
+      expect(policy.resources).toEqual([
+        {
+          role: runtimeMemoryPolicyResource.role,
+          uri: runtimeMemoryPolicyResource.resourceUri,
+          artifact: runtimeMemoryPolicyResource.artifact,
+          title: runtimeMemoryPolicyResource.title,
+        },
+        {
+          role: memoryScopeGuidanceResource.role,
+          uri: memoryScopeGuidanceResource.resourceUri,
+          artifact: memoryScopeGuidanceResource.artifact,
+          title: memoryScopeGuidanceResource.title,
+        },
+      ])
 
       const tools = await client.listTools()
-      expect(tools.tools.some(item => item.name === 'memory-search')).toBe(true)
+      const searchTool = tools.tools.find(item => item.name === 'memory-search')
+      const policyTool = tools.tools.find(item => item.name === 'memory-get-policy')
+      expect(searchTool?.description).toContain('queries should stay narrow')
+      expect(policyTool?.description).toContain('canonical runtime memory policy')
 
       const searchResult = await client.callTool({
         name: 'memory-search',

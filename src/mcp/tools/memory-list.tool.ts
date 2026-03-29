@@ -6,7 +6,8 @@ export const registerMemoryListTool = (server: McpServer, memoryService: MemoryS
   server.registerTool(
     'memory-list',
     {
-      description: 'List active memories within a specific scope.',
+      description:
+        'Use for orientation or debugging within an explicit scope. Prefer memory-search when a likely kind or subject is already known and broad fishing is unnecessary.',
       inputSchema: {
         scope: z.object({
           type: z.enum(['user', 'repo', 'org']),

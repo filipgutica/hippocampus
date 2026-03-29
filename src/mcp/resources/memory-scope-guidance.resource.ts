@@ -1,25 +1,24 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
-  guidanceMimeType,
-  guidanceResourceUri,
-  guidanceTitle,
-  readMemoryScopeGuidance,
-} from '../../guidance/memory-scope-guidance.js'
+  memoryScopeGuidanceResource,
+  readGuidanceArtifact,
+} from '../../guidance/guidance-catalog.js'
 
 export const registerMemoryScopeGuidanceResource = (server: McpServer): void => {
   server.registerResource(
     'memory-scope-guidance',
-    guidanceResourceUri,
+    memoryScopeGuidanceResource.resourceUri,
     {
-      title: guidanceTitle,
-      mimeType: guidanceMimeType,
+      title: memoryScopeGuidanceResource.title,
+      description: memoryScopeGuidanceResource.description,
+      mimeType: memoryScopeGuidanceResource.mimeType,
     },
     async () => ({
       contents: [
         {
-          uri: guidanceResourceUri,
-          mimeType: guidanceMimeType,
-          text: readMemoryScopeGuidance(),
+          uri: memoryScopeGuidanceResource.resourceUri,
+          mimeType: memoryScopeGuidanceResource.mimeType,
+          text: readGuidanceArtifact(memoryScopeGuidanceResource),
         },
       ],
     }),

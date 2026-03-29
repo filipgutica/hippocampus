@@ -16,9 +16,9 @@ import type { ApplyMemoryResult, DeleteMemoryResult, MemoryHistoryResult, Memory
 import type { ParsedMemoryEventRecord } from './models/memory-record.js'
 import type Database from 'better-sqlite3'
 import {
-  guidanceArtifact,
-  guidanceResourceUri,
-} from '../guidance/memory-scope-guidance.js'
+  runtimeMemoryPolicyResource,
+  supportingGuidanceResources,
+} from '../guidance/guidance-catalog.js'
 
 type MemoryServiceDeps = {
   memoryRepository: MemoryRepository
@@ -271,6 +271,17 @@ export class MemoryService {
   }
 
   getPolicy(): GetPolicyResult {
+    const canonicalPolicy = {
+      uri: runtimeMemoryPolicyResource.resourceUri,
+      artifact: runtimeMemoryPolicyResource.artifact,
+      title: runtimeMemoryPolicyResource.title,
+    }
+    const supportingGuidance = supportingGuidanceResources.map(resource => ({
+      uri: resource.resourceUri,
+      artifact: resource.artifact,
+      title: resource.title,
+    }))
+
     return {
       policyVersion: this.deps.policyVersion,
       description: 'Structured memories are accepted when scoped and non-empty; matching memories reinforce.',
@@ -289,8 +300,16 @@ export class MemoryService {
         'reinforcement count desc',
         'subject asc',
       ],
-      guidanceArtifact,
-      guidanceResourceUri,
+      guidanceArtifact: canonicalPolicy.artifact,
+      guidanceResourceUri: canonicalPolicy.uri,
+      canonicalPolicy,
+      supportingGuidance,
+      resources: [runtimeMemoryPolicyResource, ...supportingGuidanceResources].map(resource => ({
+        role: resource.role,
+        uri: resource.resourceUri,
+        artifact: resource.artifact,
+        title: resource.title,
+      })),
     }
   }
 }

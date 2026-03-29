@@ -1,3 +1,13 @@
+export type PolicyResourcePointer = {
+  uri: string
+  artifact: string
+  title: string
+}
+
+export type PolicyResourceEntry = PolicyResourcePointer & {
+  role: 'canonical-policy' | 'supporting-guidance'
+}
+
 export type GetPolicyResult = {
   policyVersion: string
   description: string
@@ -6,4 +16,7 @@ export type GetPolicyResult = {
   rankingRules: string[]
   guidanceArtifact: string
   guidanceResourceUri: string
+  canonicalPolicy: PolicyResourcePointer
+  supportingGuidance: PolicyResourcePointer[]
+  resources: PolicyResourceEntry[]
 }

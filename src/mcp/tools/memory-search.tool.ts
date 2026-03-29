@@ -6,7 +6,8 @@ export const registerMemorySearchTool = (server: McpServer, memoryService: Memor
   server.registerTool(
     'memory-search',
     {
-      description: 'Search active memories within a specific scope.',
+      description:
+        'Use when a likely durable preference, convention, or stable project fact may affect the next action. Scope must be explicit, queries should stay narrow, and v1 matching uses exact normalized subject matching when a subject is provided.',
       inputSchema: {
         scope: z.object({
           type: z.enum(['user', 'repo', 'org']),

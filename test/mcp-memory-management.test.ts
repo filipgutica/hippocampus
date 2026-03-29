@@ -56,9 +56,18 @@ describe('MCP memory management tools', () => {
       await client.connect(clientTransport)
 
       const tools = await client.listTools()
-      expect(tools.tools.some(tool => tool.name === 'memory-list')).toBe(true)
-      expect(tools.tools.some(tool => tool.name === 'memory-get')).toBe(true)
-      expect(tools.tools.some(tool => tool.name === 'memory-get-history')).toBe(true)
+      const listTool = tools.tools.find(tool => tool.name === 'memory-list')
+      const getTool = tools.tools.find(tool => tool.name === 'memory-get')
+      const historyTool = tools.tools.find(tool => tool.name === 'memory-get-history')
+      const applyTool = tools.tools.find(tool => tool.name === 'memory-apply-observation')
+      expect(listTool).toBeDefined()
+      expect(getTool).toBeDefined()
+      expect(historyTool).toBeDefined()
+      expect(applyTool).toBeDefined()
+      expect(listTool?.description).toContain('orientation or debugging')
+      expect(getTool?.description).toContain('known memory by id after discovery')
+      expect(historyTool?.description).toContain('not the normal retrieval path')
+      expect(applyTool?.description).toContain('Save only durable scoped observations')
       expect(tools.tools.some(tool => tool.name === 'memory-delete')).toBe(false)
 
       const applied = await client.callTool({
@@ -121,6 +130,7 @@ describe('MCP memory management tools', () => {
       })
       const searchResult = JSON.parse(getFirstTextContent(searched.content)) as { total: number }
       expect(searchResult.total).toBe(0)
+      expect(tools.tools.some(tool => tool.name === 'memory-query')).toBe(false)
     } finally {
       await client.close()
       await mcp.server.close()

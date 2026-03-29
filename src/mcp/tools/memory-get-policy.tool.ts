@@ -5,7 +5,8 @@ export const registerMemoryGetPolicyTool = (server: McpServer, memoryService: Me
   server.registerTool(
     'memory-get-policy',
     {
-      description: 'Return the current effective memory policy and guidance artifact path.',
+      description:
+        'Read this first to discover the canonical runtime memory policy, supporting guidance resources, and deterministic server-side acceptance, matching, and ranking semantics.',
     },
     async () => ({
       content: [{ type: 'text', text: JSON.stringify(memoryService.getPolicy(), null, 2) }],

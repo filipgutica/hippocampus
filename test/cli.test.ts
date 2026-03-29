@@ -60,6 +60,10 @@ describe('runCli', () => {
         appHomeOverride: home,
       })
 
+      if (app.mode !== 'runtime') {
+        throw new Error('Expected runtime app container.')
+      }
+
       try {
         const result = app.memoryService.searchMemories({
           scope: { type: 'repo', id: scopeId },

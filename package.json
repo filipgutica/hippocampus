@@ -2,14 +2,20 @@
   "name": "hippocampus",
   "version": "0.1.0",
   "type": "module",
+  "files": [
+    "dist",
+    "skills"
+  ],
   "bin": {
     "hippo": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
+    "pack:validate": "pnpm build && node ./scripts/validate-pack.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.24.1",

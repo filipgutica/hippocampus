@@ -5,4 +5,5 @@ export type GetPolicyResult = {
   matchingRules: string[]
   rankingRules: string[]
   guidanceArtifact: string
+  guidanceResourceUri: string
 }

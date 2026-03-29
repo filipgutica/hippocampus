@@ -28,6 +28,10 @@ describe('buildApp', () => {
       appHomeOverride: home,
     })
 
+    if (app.mode !== 'runtime') {
+      throw new Error('Expected runtime app container.')
+    }
+
     expect(fs.existsSync(path.join(home, 'config.json'))).toBe(true)
     expect(fs.existsSync(path.join(home, 'hippocampus.db'))).toBe(true)
     expect(app.mode).toBe('runtime')

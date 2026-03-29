@@ -11,6 +11,10 @@ import { MemoryRepository } from './memory.repository.js'
 import { MemoryEventRepository } from './memory-event.repository.js'
 import type { ApplyMemoryResult, SearchResult } from './models/memory-result.js'
 import type Database from 'better-sqlite3'
+import {
+  guidanceArtifact,
+  guidanceResourceUri,
+} from '../guidance/memory-scope-guidance.js'
 
 type MemoryServiceDeps = {
   memoryRepository: MemoryRepository
@@ -175,7 +179,8 @@ export class MemoryService {
         'reinforcement count desc',
         'subject asc',
       ],
-      guidanceArtifact: 'skills/memory-scope-skill.md',
+      guidanceArtifact,
+      guidanceResourceUri,
     }
   }
 }

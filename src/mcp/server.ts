@@ -4,6 +4,7 @@ import type { MemoryService } from '../memory/memory.service.js'
 import { registerMemoryApplyObservationTool } from './tools/memory-apply-observation.tool.js'
 import { registerMemoryGetPolicyTool } from './tools/memory-get-policy.tool.js'
 import { registerMemorySearchTool } from './tools/memory-search.tool.js'
+import { registerMemoryScopeGuidanceResource } from './resources/memory-scope-guidance.resource.js'
 
 export const createMcpServer = (memoryService: MemoryService) => {
   const server = new McpServer({
@@ -14,6 +15,7 @@ export const createMcpServer = (memoryService: MemoryService) => {
   registerMemoryGetPolicyTool(server, memoryService)
   registerMemorySearchTool(server, memoryService)
   registerMemoryApplyObservationTool(server, memoryService)
+  registerMemoryScopeGuidanceResource(server)
 
   return {
     server,

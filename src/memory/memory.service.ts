@@ -3,7 +3,7 @@ import { AppError } from '../common/errors.js'
 import { runTransaction } from '../common/db/db.js'
 import { resolveCanonicalScopeId } from '../common/resolve-canonical-scope-id.js'
 import { normalizeSubject } from './subject-normalizer.js'
-import type { ApplyObservationInput } from './dto/apply-observation.dto.js'
+import type { ApplyObservationInput, ObservationSource } from './dto/apply-observation.dto.js'
 import type { ContradictMemoryInput } from './dto/contradict-memory.dto.js'
 import type { DeleteMemoryInput } from './dto/delete-memory.dto.js'
 import type { GetPolicyResult } from './dto/get-policy.dto.js'
@@ -12,6 +12,9 @@ import type { MemoryIdInput } from './dto/memory-id.dto.js'
 import type { SearchMemoriesInput } from './dto/search-memories.dto.js'
 import { validateScope } from './memory-scope.policy.js'
 import {
+  ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
+  AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS,
+  AUTO_ARCHIVE_SWEEP_LIMIT,
   CANDIDATE_PROMOTION_THRESHOLD,
   REINFORCEMENT_CAP,
   capReinforcementValue,
@@ -25,7 +28,9 @@ import {
 import { rankMemories } from './memory-ranking.policy.js'
 import { MemoryRepository } from './memory.repository.js'
 import { MemoryEventRepository } from './memory-event.repository.js'
+import { MemoryRuntimeStateRepository } from './memory-runtime-state.repository.js'
 import type {
+  ArchiveStaleMemoriesResult,
   ApplyMemoryResult,
   ContradictMemoryResult,
   DeleteMemoryResult,
@@ -46,6 +51,7 @@ import type { ScopeRef } from '../common/types/scope-ref.js'
 type MemoryServiceDeps = {
   memoryRepository: MemoryRepository
   memoryEventRepository: MemoryEventRepository
+  memoryRuntimeStateRepository: MemoryRuntimeStateRepository
   policyVersion: string
   db: InstanceType<typeof Database>
 }
@@ -90,6 +96,14 @@ const ensureSourceType = (value: string): MemorySourceType => {
   )
 }
 
+const ensurePositiveInteger = ({ value, code, message }: { value: number; code: string; message: string }): number => {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new AppError(code, message)
+  }
+
+  return value
+}
+
 const canonicalizeScope = (scope: ScopeRef): ScopeRef => ({
   type: scope.type,
   id: resolveCanonicalScopeId(scope.type, scope.id),
@@ -100,6 +114,48 @@ const toContradictionReason = ({ replacementMemoryId }: { replacementMemoryId: s
 
 const toReplacementReason = ({ oldMemoryId }: { oldMemoryId: string }): string =>
   `Memory was created as the active replacement for contradicted memory ${oldMemoryId}.`
+
+const toArchiveReason = ({
+  olderThanDays,
+  automatic,
+}: {
+  olderThanDays: number
+  automatic: boolean
+}): string =>
+  automatic
+    ? `Memory was archived automatically after ${olderThanDays} days without reinforcement or observation.`
+    : `Memory was archived by operator sweep after ${olderThanDays} days without reinforcement or observation.`
+
+const subtractDays = ({ timestamp, days }: { timestamp: string; days: number }): string => {
+  const date = new Date(timestamp)
+  date.setUTCDate(date.getUTCDate() - days)
+  return date.toISOString()
+}
+
+const hasAutoArchiveCooldownExpired = ({
+  now,
+  lastSweepAt,
+}: {
+  now: string
+  lastSweepAt: string | null
+}): boolean => {
+  if (!lastSweepAt) {
+    return true
+  }
+
+  const elapsedMs = new Date(now).getTime() - new Date(lastSweepAt).getTime()
+  return elapsedMs >= AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS * 60 * 60 * 1000
+}
+
+type ArchiveStaleMemoriesInput = {
+  olderThanDays?: number | null
+  dryRun?: boolean
+  limit?: number | null
+  reason?: string
+  source?: ObservationSource | null
+  updateSweepTimestamp?: boolean
+  deferSweepTimestampWhenTruncated?: boolean
+}
 
 const toParsedEvent = (event: {
   id: string
@@ -154,12 +210,129 @@ export class MemoryService {
     }
   }
 
+  private maybeArchiveStaleMemories(): void {
+    const now = new Date().toISOString()
+    const lastSweepAt = this.deps.memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
+
+    if (!hasAutoArchiveCooldownExpired({ now, lastSweepAt })) {
+      return
+    }
+
+    this.archiveStaleMemories({
+      olderThanDays: ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
+      dryRun: false,
+      limit: AUTO_ARCHIVE_SWEEP_LIMIT,
+      reason: toArchiveReason({
+        olderThanDays: ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
+        automatic: true,
+      }),
+      source: null,
+      updateSweepTimestamp: true,
+      deferSweepTimestampWhenTruncated: true,
+    })
+  }
+
+  archiveStaleMemories(input: ArchiveStaleMemoriesInput = {}): ArchiveStaleMemoriesResult {
+    const olderThanDays = ensurePositiveInteger({
+      value: input.olderThanDays ?? ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
+      code: 'INVALID_OLDER_THAN_DAYS',
+      message: 'olderThanDays must be a positive integer.',
+    })
+    const dryRun = input.dryRun ?? false
+    const limit =
+      input.limit == null
+        ? null
+        : ensurePositiveInteger({
+            value: input.limit,
+            code: 'INVALID_LIMIT',
+            message: 'Limit must be a positive integer.',
+          })
+    const now = new Date().toISOString()
+    const cutoffAt = subtractDays({
+      timestamp: now,
+      days: olderThanDays,
+    })
+    const reason =
+      input.reason ??
+      toArchiveReason({
+        olderThanDays,
+        automatic: false,
+      })
+    const queryLimit =
+      input.deferSweepTimestampWhenTruncated && limit != null ? limit + 1 : limit
+
+    if (dryRun) {
+      const items = this.deps.memoryRepository.listStaleMemories({
+        cutoffAt,
+        limit,
+      })
+
+      return {
+        dryRun,
+        olderThanDays,
+        cutoffAt,
+        items,
+        total: items.length,
+      }
+    }
+
+    return runTransaction(this.deps.db, () => {
+      const staleMemories = this.deps.memoryRepository.listStaleMemories({
+        cutoffAt,
+        limit: queryLimit,
+      })
+      const hasMoreStaleMemories = limit != null && staleMemories.length > limit
+      const memoriesToArchive = hasMoreStaleMemories ? staleMemories.slice(0, limit) : staleMemories
+      const archivedMemories: MemoryRecord[] = []
+
+      for (const staleMemory of memoriesToArchive) {
+        const archivedMemory = this.deps.memoryRepository.archiveMemoryIfLive({
+          id: staleMemory.id,
+          now,
+        })
+
+        if (!archivedMemory) {
+          continue
+        }
+
+        this.deps.memoryEventRepository.insert({
+          memoryId: archivedMemory.id,
+          eventType: 'archived',
+          scope: archivedMemory.scope,
+          kind: archivedMemory.kind,
+          subjectKey: archivedMemory.subjectKey,
+          observation: null,
+          source: input.source ?? null,
+          reason,
+          now,
+        })
+
+        archivedMemories.push(archivedMemory)
+      }
+
+      if ((input.updateSweepTimestamp ?? true) && !hasMoreStaleMemories) {
+        this.deps.memoryRuntimeStateRepository.setLastAutoArchiveSweepAt(now)
+      }
+
+      return {
+        dryRun,
+        olderThanDays,
+        cutoffAt,
+        items: archivedMemories,
+        total: archivedMemories.length,
+      }
+    })
+  }
+
   applyObservation(input: ApplyObservationInput): ApplyMemoryResult {
     const scope = canonicalizeScope(validateScope(input.scope))
     const kind = ensureNonEmpty(input.kind, 'INVALID_KIND', 'Observation kind must not be empty.')
     const statement = ensureNonEmpty(input.statement, 'INVALID_STATEMENT', 'Observation statement must not be empty.')
     const sourceType = ensureSourceType(input.sourceType)
     const subjectKey = normalizeSubject(input.subject)
+
+    this.maybeArchiveStaleMemories()
+
     const now = new Date().toISOString()
 
     const existing = subjectKey ? this.deps.memoryRepository.findSimilar(scope, kind, subjectKey) : null
@@ -262,8 +435,12 @@ export class MemoryService {
   }
 
   searchMemories(input: SearchMemoriesInput): SearchResult {
+    const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
     const subject = input.subject ? normalizeSubject(input.subject) : null
+
+    this.maybeArchiveStaleMemories()
+
     const items = rankMemories(
       this.deps.memoryRepository.search({
         scope,
@@ -273,13 +450,17 @@ export class MemoryService {
     )
 
     return {
-      items: items.slice(0, toPositiveLimit(input.limit)),
+      items: items.slice(0, limit),
       total: items.length,
     }
   }
 
   listMemories(input: ListMemoriesInput): MemoryListResult {
+    const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
+
+    this.maybeArchiveStaleMemories()
+
     const items = rankMemories(
       this.deps.memoryRepository.list({
         scope,
@@ -289,7 +470,7 @@ export class MemoryService {
     )
 
     return {
-      items: items.slice(0, toPositiveLimit(input.limit)),
+      items: items.slice(0, limit),
       total: items.length,
     }
   }
@@ -396,12 +577,26 @@ export class MemoryService {
     if (!replacementSubjectKey) {
       throw new AppError('INVALID_SUBJECT', 'Replacement subject is empty after normalization.')
     }
+
+    this.maybeArchiveStaleMemories()
+
+    const currentMemory = this.deps.memoryRepository.getById(id)
+    if (!currentMemory) {
+      throw new AppError('MEMORY_NOT_FOUND', `Memory not found: ${id}`)
+    }
+    if (currentMemory.status === 'deleted') {
+      throw new AppError('MEMORY_ALREADY_DELETED', `Memory already deleted: ${currentMemory.id}`)
+    }
+    if (currentMemory.supersededBy) {
+      throw new AppError('MEMORY_ALREADY_SUPERSEDED', `Memory already superseded: ${currentMemory.id}`)
+    }
+
     const now = new Date().toISOString()
 
     const existing = replacementSubjectKey
       ? this.deps.memoryRepository.findSimilar(replacementScope, replacementKind, replacementSubjectKey)
       : null
-    if (existing && existing.id !== memory.id) {
+    if (existing && existing.id !== currentMemory.id) {
       throw new AppError(
         'REPLACEMENT_MEMORY_ALREADY_EXISTS',
         `Active or candidate replacement already exists for subject ${input.replacement.subject.trim()}.`,
@@ -411,7 +606,7 @@ export class MemoryService {
     return runTransaction(this.deps.db, () => {
       const replacementMemoryId = randomUUID()
       const suppressedMemory = this.deps.memoryRepository.suppress({
-        memory,
+        memory: currentMemory,
         now,
       })
 
@@ -509,6 +704,7 @@ export class MemoryService {
         'normal retrieval only returns active memories',
         'matching only treats candidate and active memories as live for reinforcement and duplicate detection',
         `candidate memories promote to active at reinforcement count >= ${CANDIDATE_PROMOTION_THRESHOLD}`,
+        `candidate and active memories may be archived after ${ACTIVE_ARCHIVE_STALE_AFTER_DAYS} days without observation`,
       ],
       rankingRules: [
         'confidence desc',
@@ -522,6 +718,7 @@ export class MemoryService {
       contradictionRules: [
         'find the memory id with memory-search or memory-list before calling memory-contradict',
         'contradicting a memory suppresses the old memory and links it via supersededBy to the new active replacement',
+        'contradicting an archived memory creates a new active replacement; archival does not resurrect the old memory',
         'memory-get returns supersededByMemory when a direct successor exists',
       ],
       guidanceArtifact: canonicalPolicy.artifact,

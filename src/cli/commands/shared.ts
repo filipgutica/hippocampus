@@ -3,7 +3,14 @@ import { resolveRepoScopeId } from '../../repos/types.js'
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../../memory/dto/apply-observation.dto.js'
 import type { InitResult } from '../../app/init.service.js'
-import type { ApplyMemoryResult, DeleteMemoryResult, MemoryHistoryResult, MemoryListResult, SearchResult } from '../../memory/models/memory-result.js'
+import type {
+  ApplyMemoryResult,
+  ArchiveStaleMemoriesResult,
+  DeleteMemoryResult,
+  MemoryHistoryResult,
+  MemoryListResult,
+  SearchResult,
+} from '../../memory/models/memory-result.js'
 import type { GetPolicyResult } from '../../memory/dto/get-policy.dto.js'
 import type { MemoryGetResult, MemoryRecord } from '../../memory/models/memory-record.js'
 
@@ -147,6 +154,26 @@ const formatMemoryCollection = (result: SearchResult | MemoryListResult): string
 export const formatSearchResult = (result: SearchResult): string => formatMemoryCollection(result)
 
 export const formatMemoryListResult = (result: MemoryListResult): string => formatMemoryCollection(result)
+
+export const formatArchiveStaleMemoriesResult = (result: ArchiveStaleMemoriesResult): string => {
+  if (result.items.length === 0) {
+    return [
+      result.dryRun ? 'stale memories preview.' : 'stale memories archived.',
+      `olderThanDays: ${result.olderThanDays}`,
+      `cutoffAt: ${result.cutoffAt}`,
+      `total: ${result.total}`,
+      'items: none',
+    ].join('\n')
+  }
+
+  return [
+    result.dryRun ? 'stale memories preview.' : 'stale memories archived.',
+    `olderThanDays: ${result.olderThanDays}`,
+    `cutoffAt: ${result.cutoffAt}`,
+    '',
+    formatMemoryCollection(result),
+  ].join('\n')
+}
 
 export const formatMemoryHistoryResult = (result: MemoryHistoryResult): string => {
   if (result.items.length === 0) {

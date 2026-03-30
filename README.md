@@ -10,9 +10,11 @@ Hippocampus currently supports:
 - structured memory capture through CLI and MCP
 - explicit memory classification with `sourceType`
 - scoped memory search
+- bounded automatic archival of stale memories
 - memory inspection and history
 - contradiction and supersession through MCP
 - soft delete from the CLI for operator/debug workflows
+- explicit stale-memory archival from the CLI
 - runtime policy and supporting guidance delivery through MCP resources
 
 Local state lives in `~/.hippocampus` by default. Set `HIPPOCAMPUS_HOME` to use a different location.
@@ -163,6 +165,7 @@ Kind-only broad recall should still use `memory-search`, for example `scope + ki
 Fields to expect on stored memories:
 
 - `sourceType`: why the memory exists: `explicit_user_statement`, `observed_pattern`, or `tool_observation`
+- `kind`: free-form string; prefer stable values like `preference`, `convention`, `workflow`, `project-fact`, or `tooling`
 - `status`: lifecycle state: `candidate`, `active`, `suppressed`, `archived`, or `deleted`
 - `supersededBy`: id of the direct replacement memory when a memory has been contradicted
 
@@ -171,6 +174,9 @@ Current retrieval behavior:
 - `observed_pattern` memories start as `candidate`
 - `candidate` memories do not appear in normal `memory-search` or `memory-list` results
 - a `candidate` memory promotes to `active` after enough reinforcement
+- stale `candidate` and `active` memories may be archived automatically before normal retrieval
+- archived memories stay inspectable through `memory-get` and `memory-get-history`
+- archived memories are not resurrected by normal reinforcement; a new matching observation creates a new memory
 
 Contradict a memory over MCP:
 
@@ -186,6 +192,7 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories list \
   --scope-id /tmp/example-repo \
   --json
 
+HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories archive-stale --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories inspect --id <memory-id> --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories history --id <memory-id> --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-id> --json
@@ -193,19 +200,18 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-
 
 ## Current Limitations
 
-- no decay workflow
 - no semantic retrieval or embeddings
 - no broader semantic query helper beyond exact scoped retrieval
-- no automatic suppression or archival engine beyond explicit contradiction
+- no resurrection workflow for archived memories
 - no bulk reset or hard purge command
 - no published Homebrew formula yet
 
 ## Next
 
-The next active area is to extend lifecycle management beyond explicit contradiction and bounded promotion.
+The next active area is semantic retrieval on top of the explicit lifecycle state model.
 
 - Keep `memory-search` as the default retrieval primitive unless a future pass intentionally changes matching behavior.
-- Add decay, archival, and contradiction-resolution workflows deliberately rather than relying on uncontrolled heuristics.
+- Add semantic search deliberately without weakening explicit lifecycle transitions or reviving archived memories implicitly.
 
 ## First Release Checklist
 

@@ -2,7 +2,7 @@ export type MemorySourceType = 'explicit_user_statement' | 'observed_pattern' | 
 
 export type MemoryStatus = 'candidate' | 'active' | 'suppressed' | 'archived' | 'deleted'
 
-export type MemoryEventType = 'created' | 'reinforced' | 'rejected' | 'contradicted' | 'deleted'
+export type MemoryEventType = 'created' | 'reinforced' | 'rejected' | 'contradicted' | 'archived' | 'deleted'
 
 export type ApplyMemoryDecision =
   | { decision: 'reject'; reason: string; policyVersion: string }

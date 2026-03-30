@@ -240,6 +240,32 @@ export class MemoryRepository {
     return rows.map(toRecord)
   }
 
+  listStaleMemories(input: {
+    cutoffAt: string
+    limit?: number | null
+  }): MemoryRecord[] {
+    const params: Array<string | number> = [input.cutoffAt]
+    const limitClause = input.limit != null ? ' LIMIT ?' : ''
+
+    if (input.limit != null) {
+      params.push(input.limit)
+    }
+
+    const rows = this.db
+      .prepare(
+        `
+          SELECT *
+          FROM memories
+          WHERE status IN ('candidate', 'active') AND last_observed_at <= ?
+          ORDER BY last_observed_at ASC, created_at ASC
+          ${limitClause}
+        `,
+      )
+      .all(...params) as MemoryRow[]
+
+    return rows.map(toRecord)
+  }
+
   getById(id: string): MemoryRecord | null {
     const row = this.db.prepare('SELECT * FROM memories WHERE id = ? LIMIT 1').get(id) as MemoryRow | undefined
 
@@ -268,6 +294,32 @@ export class MemoryRepository {
       .run(next.deletedAt, next.updatedAt, next.id)
 
     return next
+  }
+
+  archiveMemoryIfLive(input: {
+    id: string
+    now: string
+  }): MemoryRecord | null {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE memories
+          SET status = 'archived', updated_at = ?
+          WHERE id = ? AND status IN ('candidate', 'active')
+        `,
+      )
+      .run(input.now, input.id)
+
+    if (result.changes === 0) {
+      return null
+    }
+
+    const archived = this.getById(input.id)
+    if (!archived) {
+      throw new Error(`Expected archived memory ${input.id} to exist after update.`)
+    }
+
+    return archived
   }
 
   suppress(input: {

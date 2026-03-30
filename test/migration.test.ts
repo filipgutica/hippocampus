@@ -33,6 +33,7 @@ describe('database migrations', () => {
     expect(indexes.some(index => index.name === 'idx_memories_live_scope_kind_subject')).toBe(true)
     expect(indexes.some(index => index.name === 'idx_memories_status_scope_kind')).toBe(true)
     expect(indexes.some(index => index.name === 'idx_memories_superseded_by')).toBe(true)
+    expect(indexes.some(index => index.name === 'idx_memories_live_last_observed_created')).toBe(true)
 
     db.close()
   })

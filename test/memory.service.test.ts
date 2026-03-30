@@ -1,12 +1,13 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { initializeDatabase } from '../src/common/db/db.js'
 import type { ScopeRef } from '../src/common/types/scope-ref.js'
 import { MemoryEventRepository } from '../src/memory/memory-event.repository.js'
 import { MEMORY_POLICY_VERSION } from '../src/memory/memory.policy.js'
 import { MemoryRepository } from '../src/memory/memory.repository.js'
+import { MemoryRuntimeStateRepository } from '../src/memory/memory-runtime-state.repository.js'
 import { MemoryService } from '../src/memory/memory.service.js'
 
 const tempDirs: string[] = []
@@ -18,24 +19,35 @@ const createTempDir = (): string => {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
+
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
 
-describe('MemoryService', () => {
-  it('classifies, promotes, contradicts, and deletes scoped memories', () => {
-    const dir = createTempDir()
-    const dbFile = path.join(dir, 'hippocampus.db')
-    const db = initializeDatabase(dbFile)
-    const memoryRepository = new MemoryRepository(db)
-    const memoryEventRepository = new MemoryEventRepository(db)
-    const service = new MemoryService({
-      memoryRepository,
-      memoryEventRepository,
+const createService = () => {
+  const dir = createTempDir()
+  const dbFile = path.join(dir, 'hippocampus.db')
+  const db = initializeDatabase(dbFile)
+  const memoryRuntimeStateRepository = new MemoryRuntimeStateRepository(db)
+
+  return {
+    db,
+    memoryRuntimeStateRepository,
+    service: new MemoryService({
+      memoryRepository: new MemoryRepository(db),
+      memoryEventRepository: new MemoryEventRepository(db),
+      memoryRuntimeStateRepository,
       policyVersion: MEMORY_POLICY_VERSION,
       db,
-    })
+    }),
+  }
+}
+
+describe('MemoryService', () => {
+  it('classifies, promotes, contradicts, and deletes scoped memories', () => {
+    const { db, service } = createService()
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
 
     const first = service.applyObservation({
@@ -155,15 +167,7 @@ describe('MemoryService', () => {
   })
 
   it('fails deterministically for missing, invalid, or already superseded memories', () => {
-    const dir = createTempDir()
-    const dbFile = path.join(dir, 'hippocampus.db')
-    const db = initializeDatabase(dbFile)
-    const service = new MemoryService({
-      memoryRepository: new MemoryRepository(db),
-      memoryEventRepository: new MemoryEventRepository(db),
-      policyVersion: MEMORY_POLICY_VERSION,
-      db,
-    })
+    const { db, service } = createService()
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
@@ -249,16 +253,391 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('canonicalizes existing repo scope paths by realpath and preserves missing repo scope ids', () => {
-    const dir = createTempDir()
-    const dbFile = path.join(dir, 'hippocampus.db')
-    const db = initializeDatabase(dbFile)
-    const service = new MemoryService({
-      memoryRepository: new MemoryRepository(db),
-      memoryEventRepository: new MemoryEventRepository(db),
-      policyVersion: MEMORY_POLICY_VERSION,
-      db,
+  it('archives stale active and candidate memories without changing evidence and supports dry runs', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const active = service.applyObservation({
+      scope,
+      kind: 'workflow',
+      subject: 'run tests before commit',
+      statement: 'Run tests before commit.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
     })
+    const candidate = service.applyObservation({
+      scope,
+      kind: 'preference',
+      subject: 'prefer short plans',
+      statement: 'Prefer short plans.',
+      sourceType: 'observed_pattern',
+      source: { channel: 'cli' },
+    })
+    const superseded = service.applyObservation({
+      scope,
+      kind: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const deleted = service.applyObservation({
+      scope,
+      kind: 'tooling',
+      subject: 'prefer eslint',
+      statement: 'Use eslint for linting.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (active.decision !== 'create' || !('memory' in active)) {
+      throw new Error('Expected active memory creation.')
+    }
+    if (candidate.decision !== 'create' || !('memory' in candidate)) {
+      throw new Error('Expected candidate memory creation.')
+    }
+    if (superseded.decision !== 'create' || !('memory' in superseded)) {
+      throw new Error('Expected superseded memory creation.')
+    }
+    if (deleted.decision !== 'create' || !('memory' in deleted)) {
+      throw new Error('Expected deleted memory creation.')
+    }
+
+    const contradicted = service.contradictMemory({
+      id: superseded.memory.id,
+      replacement: {
+        scope,
+        kind: superseded.memory.kind,
+        subject: 'prefer npm',
+        statement: 'Use npm for this repo.',
+        sourceType: 'explicit_user_statement',
+        details: null,
+      },
+      source: { channel: 'cli' },
+    })
+    service.deleteMemory({
+      id: deleted.memory.id,
+      source: { channel: 'cli' },
+    })
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    const dryRun = service.archiveStaleMemories({
+      dryRun: true,
+      source: { channel: 'cli' },
+    })
+
+    expect(dryRun.total).toBe(3)
+    expect(dryRun.items.map(item => item.id).sort()).toEqual([
+      active.memory.id,
+      contradicted.replacementMemory.id,
+      candidate.memory.id,
+    ].sort())
+
+    const archived = service.archiveStaleMemories({
+      source: { channel: 'cli' },
+    })
+    const activeInspect = service.getMemory({ id: active.memory.id })
+    const candidateInspect = service.getMemory({ id: candidate.memory.id })
+    const supersededInspect = service.getMemory({ id: superseded.memory.id })
+    const deletedInspect = service.getMemory({ id: deleted.memory.id })
+    const activeHistory = service.getMemoryHistory({ id: active.memory.id })
+    const activeSearch = service.searchMemories({
+      scope,
+      subject: 'run tests before commit',
+      limit: 10,
+    })
+    const candidateSearch = service.searchMemories({
+      scope,
+      subject: 'prefer short plans',
+      limit: 10,
+    })
+    const list = service.listMemories({
+      scope,
+      limit: 10,
+    })
+
+    expect(archived.total).toBe(3)
+    expect(archived.items.map(item => item.id).sort()).toEqual([
+      active.memory.id,
+      candidate.memory.id,
+      contradicted.replacementMemory.id,
+    ].sort())
+    expect(activeInspect.status).toBe('archived')
+    expect(candidateInspect.status).toBe('archived')
+    expect(activeInspect.confidence).toBe(active.memory.confidence)
+    expect(activeInspect.reinforcementCount).toBe(active.memory.reinforcementCount)
+    expect(candidateInspect.confidence).toBe(candidate.memory.confidence)
+    expect(candidateInspect.reinforcementCount).toBe(candidate.memory.reinforcementCount)
+    expect(supersededInspect.status).toBe('suppressed')
+    expect(deletedInspect.status).toBe('deleted')
+    expect(activeHistory.items.map(item => item.eventType)).toEqual(['created', 'archived'])
+    expect(activeHistory.items[1]?.source).toEqual({ channel: 'cli' })
+    expect(activeSearch.total).toBe(0)
+    expect(candidateSearch.total).toBe(0)
+    expect(list.items.every(item => item.status === 'active')).toBe(true)
+
+    db.close()
+  })
+
+  it('archives automatically on eligible reads, does not resurrect archived memories, and allows contradiction', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      kind: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    const firstSearch = service.searchMemories({
+      scope,
+      subject: 'prefer pnpm',
+      limit: 10,
+    })
+    const archivedHistory = service.getMemoryHistory({ id: created.memory.id })
+
+    expect(firstSearch.total).toBe(0)
+    expect(service.getMemory({ id: created.memory.id }).status).toBe('archived')
+    expect(archivedHistory.items.map(item => item.eventType)).toEqual(['created', 'archived'])
+    expect(archivedHistory.items[1]?.source).toBeNull()
+
+    service.searchMemories({
+      scope,
+      subject: 'prefer pnpm',
+      limit: 10,
+    })
+    expect(service.getMemoryHistory({ id: created.memory.id }).items.map(item => item.eventType)).toEqual([
+      'created',
+      'archived',
+    ])
+
+    const recreated = service.applyObservation({
+      scope,
+      kind: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (recreated.decision !== 'create' || !('memory' in recreated)) {
+      throw new Error('Expected archived memory to stay non-live for matching.')
+    }
+
+    const contradicted = service.contradictMemory({
+      id: created.memory.id,
+      replacement: {
+        scope,
+        kind: 'preference',
+        subject: 'prefer npm',
+        statement: 'Use npm for this repo.',
+        sourceType: 'explicit_user_statement',
+        details: null,
+      },
+      source: { channel: 'cli' },
+    })
+
+    expect(recreated.memory.id).not.toBe(created.memory.id)
+    expect(service.searchMemories({ scope, subject: 'prefer pnpm', limit: 10 }).items[0]?.id).toBe(recreated.memory.id)
+    expect(contradicted.contradictedMemory.status).toBe('suppressed')
+    expect(contradicted.replacementMemory.status).toBe('active')
+
+    db.close()
+  })
+
+  it('does not auto-archive on get/history/delete and honors the automatic sweep cooldown', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, memoryRuntimeStateRepository, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const readOnlyCreated = service.applyObservation({
+      scope,
+      kind: 'workflow',
+      subject: 'read docs before coding',
+      statement: 'Read docs before coding.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const deletedCreated = service.applyObservation({
+      scope,
+      kind: 'workflow',
+      subject: 'run tests before merge',
+      statement: 'Run tests before merge.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (readOnlyCreated.decision !== 'create' || !('memory' in readOnlyCreated)) {
+      throw new Error('Expected read-only memory creation.')
+    }
+    if (deletedCreated.decision !== 'create' || !('memory' in deletedCreated)) {
+      throw new Error('Expected delete-path memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    expect(service.getMemory({ id: readOnlyCreated.memory.id }).status).toBe('active')
+    expect(service.getMemoryHistory({ id: readOnlyCreated.memory.id }).items.map(item => item.eventType)).toEqual([
+      'created',
+    ])
+
+    const deleted = service.deleteMemory({
+      id: deletedCreated.memory.id,
+      source: { channel: 'cli' },
+    })
+    expect(deleted.memory.status).toBe('deleted')
+    expect(service.getMemoryHistory({ id: deletedCreated.memory.id }).items.map(item => item.eventType)).toEqual([
+      'created',
+      'deleted',
+    ])
+
+    const archivedBySearch = service.searchMemories({
+      scope,
+      subject: 'read docs before coding',
+      limit: 10,
+    })
+    expect(archivedBySearch.total).toBe(0)
+    expect(service.getMemory({ id: readOnlyCreated.memory.id }).status).toBe('archived')
+
+    const cooldownCreated = service.applyObservation({
+      scope,
+      kind: 'workflow',
+      subject: 'keep commits focused',
+      statement: 'Keep commits focused.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (cooldownCreated.decision !== 'create' || !('memory' in cooldownCreated)) {
+      throw new Error('Expected cooldown memory creation.')
+    }
+
+    db.prepare('UPDATE memories SET last_observed_at = ?, updated_at = ? WHERE id = ?').run(
+      '2025-12-01T00:00:00.000Z',
+      '2025-12-01T00:00:00.000Z',
+      cooldownCreated.memory.id,
+    )
+
+    vi.setSystemTime(new Date('2026-04-05T12:00:00.000Z'))
+
+    const duringCooldown = service.searchMemories({
+      scope,
+      subject: 'keep commits focused',
+      limit: 10,
+    })
+    expect(duringCooldown.total).toBe(1)
+    expect(duringCooldown.items[0]?.id).toBe(cooldownCreated.memory.id)
+    expect(service.getMemory({ id: cooldownCreated.memory.id }).status).toBe('active')
+
+    memoryRuntimeStateRepository.setLastAutoArchiveSweepAt('2026-04-04T00:00:00.000Z')
+
+    const afterCooldown = service.searchMemories({
+      scope,
+      subject: 'keep commits focused',
+      limit: 10,
+    })
+    expect(afterCooldown.total).toBe(0)
+    expect(service.getMemory({ id: cooldownCreated.memory.id }).status).toBe('archived')
+
+    db.close()
+  })
+
+  it('does not auto-archive stale memories for invalid eligible requests', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, memoryRuntimeStateRepository, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      kind: 'workflow',
+      subject: 'write tests first',
+      statement: 'Write tests first.',
+      sourceType: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+    const initialSweepAt = memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
+
+    expect(() =>
+      service.searchMemories({
+        scope,
+        subject: 'write tests first',
+        limit: 0,
+      }),
+    ).toThrow('Limit must be a positive integer.')
+    expect(service.getMemory({ id: created.memory.id }).status).toBe('active')
+    expect(service.getMemoryHistory({ id: created.memory.id }).items.map(item => item.eventType)).toEqual(['created'])
+    expect(memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()).toBe(initialSweepAt)
+
+    db.close()
+  })
+
+  it('continues automatic archival across batches without waiting for the cooldown', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, memoryRuntimeStateRepository, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    for (let index = 0; index < 51; index += 1) {
+      service.applyObservation({
+        scope,
+        kind: 'workflow',
+        subject: `stale memory ${index}`,
+        statement: `Stale memory ${index}.`,
+        sourceType: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+    const initialSweepAt = memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
+
+    const firstList = service.listMemories({
+      scope,
+      limit: 100,
+    })
+
+    expect(firstList.total).toBe(1)
+    expect(memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()).toBe(initialSweepAt)
+
+    const secondList = service.listMemories({
+      scope,
+      limit: 100,
+    })
+
+    expect(secondList.total).toBe(0)
+    expect(memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()).toBe('2026-04-05T00:00:00.000Z')
+
+    db.close()
+  })
+
+  it('canonicalizes existing repo scope paths by realpath and preserves missing repo scope ids', () => {
+    const { db, service } = createService()
+    const dir = createTempDir()
     const repoRoot = path.join(dir, 'repo')
     const repoSymlink = path.join(dir, 'repo-link')
     const missingRepoScopeId = path.join(dir, 'missing-repo')

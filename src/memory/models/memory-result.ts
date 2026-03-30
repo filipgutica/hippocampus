@@ -17,6 +17,14 @@ export type MemoryListResult = {
   total: number
 }
 
+export type ArchiveStaleMemoriesResult = {
+  dryRun: boolean
+  olderThanDays: number
+  cutoffAt: string
+  items: MemoryRecord[]
+  total: number
+}
+
 export type MemoryHistoryResult = {
   items: ParsedMemoryEventRecord[]
   total: number

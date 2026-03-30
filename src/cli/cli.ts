@@ -8,6 +8,7 @@ import { runApplyCommand } from './commands/apply.command.js'
 import { runGetPolicyCommand } from './commands/get-policy.command.js'
 import { runInitCommand } from './commands/init.command.js'
 import { runMcpServeCommand } from './commands/mcp-serve.command.js'
+import { runMemoriesArchiveStaleCommand } from './commands/memories-archive-stale.command.js'
 import { runMemoriesDeleteCommand } from './commands/memories-delete.command.js'
 import { runMemoriesHistoryCommand } from './commands/memories-history.command.js'
 import { runMemoriesInspectCommand } from './commands/memories-inspect.command.js'
@@ -265,6 +266,37 @@ const createParser = (argv: string[], io: CliIO) => {
                     }),
                     kind: typeof args.kind === 'string' ? args.kind : null,
                     limit: typeof args.limit === 'number' ? args.limit : null,
+                  },
+                  io,
+                  Boolean(args.json),
+                ),
+              )
+            },
+          })
+          .command({
+            command: 'archive-stale',
+            describe: 'Archive stale active and candidate memories.',
+            builder: commandParser =>
+              commandParser
+                .option('older-than-days', {
+                  type: 'number',
+                  default: 90,
+                })
+                .option('dry-run', {
+                  type: 'boolean',
+                  default: false,
+                })
+                .option('json', {
+                  type: 'boolean',
+                  default: false,
+                }),
+            handler: async args => {
+              await withRuntimeApp(app =>
+                runMemoriesArchiveStaleCommand(
+                  app,
+                  {
+                    olderThanDays: typeof args.olderThanDays === 'number' ? args.olderThanDays : null,
+                    dryRun: Boolean(args.dryRun),
                   },
                   io,
                   Boolean(args.json),

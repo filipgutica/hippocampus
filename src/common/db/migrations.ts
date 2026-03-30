@@ -95,6 +95,28 @@ export const migrations: Migration[] = [
         ON memories(superseded_by);
     `,
   },
+  {
+    version: 4,
+    name: 'memory_runtime_state',
+    up: `
+      CREATE TABLE IF NOT EXISTS memory_runtime_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        last_auto_archive_sweep_at TEXT
+      );
+
+      INSERT OR IGNORE INTO memory_runtime_state (singleton, last_auto_archive_sweep_at)
+      VALUES (1, NULL);
+    `,
+  },
+  {
+    version: 5,
+    name: 'memory_live_last_observed_index',
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_memories_live_last_observed_created
+        ON memories(status, last_observed_at, created_at)
+        WHERE status IN ('candidate', 'active');
+    `,
+  },
 ]
 
 export const runMigrations = (db: InstanceType<typeof Database>): void => {

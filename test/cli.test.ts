@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runCli } from '../src/cli/cli.js'
 import { buildApp } from '../src/app/build-app.js'
 import { createMcpServer } from '../src/mcp/server.js'
@@ -73,6 +73,8 @@ const createIo = () => {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
+
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -223,6 +225,195 @@ describe('runCli', () => {
       expect(historyIo.getStderr()).toBe('')
       expect(deleteIo.getStderr()).toBe('')
       expect(initIo.getStderr()).toBe('')
+    })
+  })
+
+  it('archives stale memories via the CLI and supports dry runs', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const home = createTempDir()
+    const scopeId = '/tmp/example-repo'
+
+    await withAppHome(home, async () => {
+      await runCli(['init'], createIo().io)
+
+      await runCli(
+        [
+          'apply',
+          '--scope-type',
+          'repo',
+          '--scope-id',
+          scopeId,
+          '--kind',
+          'workflow',
+          '--source-type',
+          'explicit_user_statement',
+          '--subject',
+          'Run tests before commit',
+          '--statement',
+          'Run tests before commit.',
+          '--json',
+        ],
+        createIo().io,
+      )
+
+      vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+      const dryRunIo = createIo()
+      await runCli(['memories', 'archive-stale', '--dry-run', '--json'], dryRunIo.io)
+      const dryRunResult = JSON.parse(dryRunIo.getStdout().trim()) as {
+        dryRun: boolean
+        total: number
+        items: Array<{ status: string }>
+      }
+
+      expect(dryRunResult.dryRun).toBe(true)
+      expect(dryRunResult.total).toBe(1)
+      expect(dryRunResult.items[0]?.status).toBe('active')
+
+      const archiveIo = createIo()
+      await runCli(['memories', 'archive-stale', '--json'], archiveIo.io)
+      const archiveResult = JSON.parse(archiveIo.getStdout().trim()) as {
+        dryRun: boolean
+        total: number
+        items: Array<{ status: string; id: string }>
+      }
+
+      expect(archiveResult.dryRun).toBe(false)
+      expect(archiveResult.total).toBe(1)
+      expect(archiveResult.items[0]?.status).toBe('archived')
+
+      const inspectIo = createIo()
+      await runCli(['memories', 'inspect', '--id', archiveResult.items[0]!.id, '--json'], inspectIo.io)
+      const inspectResult = JSON.parse(inspectIo.getStdout().trim()) as { status: string }
+      expect(inspectResult.status).toBe('archived')
+    })
+  })
+
+  it('archives stale memories automatically before list and search without resurrecting them', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const home = createTempDir()
+    const scopeId = '/tmp/example-repo'
+
+    await withAppHome(home, async () => {
+      await runCli(['init'], createIo().io)
+
+      const applyIo = createIo()
+      await runCli(
+        [
+          'apply',
+          '--scope-type',
+          'repo',
+          '--scope-id',
+          scopeId,
+          '--kind',
+          'preference',
+          '--source-type',
+          'explicit_user_statement',
+          '--subject',
+          'Prefer pnpm',
+          '--statement',
+          'Use pnpm for this repo.',
+          '--json',
+        ],
+        applyIo.io,
+      )
+
+      const created = JSON.parse(applyIo.getStdout().trim()) as { memory: { id: string } }
+
+      vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+      const listIo = createIo()
+      await runCli(['memories', 'list', '--scope-type', 'repo', '--scope-id', scopeId, '--json'], listIo.io)
+      const listResult = JSON.parse(listIo.getStdout().trim()) as { total: number }
+      expect(listResult.total).toBe(0)
+
+      const inspectIo = createIo()
+      await runCli(['memories', 'inspect', '--id', created.memory.id, '--json'], inspectIo.io)
+      const inspectResult = JSON.parse(inspectIo.getStdout().trim()) as { status: string }
+      expect(inspectResult.status).toBe('archived')
+
+      const reapplyIo = createIo()
+      await runCli(
+        [
+          'apply',
+          '--scope-type',
+          'repo',
+          '--scope-id',
+          scopeId,
+          '--kind',
+          'preference',
+          '--source-type',
+          'explicit_user_statement',
+          '--subject',
+          'Prefer pnpm',
+          '--statement',
+          'Use pnpm for this repo.',
+          '--json',
+        ],
+        reapplyIo.io,
+      )
+
+      const recreated = JSON.parse(reapplyIo.getStdout().trim()) as {
+        decision: string
+        memory: { id: string }
+      }
+
+      expect(recreated.decision).toBe('create')
+      expect(recreated.memory.id).not.toBe(created.memory.id)
+    })
+  })
+
+  it('supports manual archival threshold overrides from the CLI', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const home = createTempDir()
+    const scopeId = '/tmp/example-repo'
+
+    await withAppHome(home, async () => {
+      await runCli(['init'], createIo().io)
+
+      const applyIo = createIo()
+      await runCli(
+        [
+          'apply',
+          '--scope-type',
+          'repo',
+          '--scope-id',
+          scopeId,
+          '--kind',
+          'preference',
+          '--source-type',
+          'explicit_user_statement',
+          '--subject',
+          'Prefer concise summaries',
+          '--statement',
+          'Prefer concise summaries.',
+          '--json',
+        ],
+        applyIo.io,
+      )
+
+      const created = JSON.parse(applyIo.getStdout().trim()) as { memory: { id: string } }
+
+      vi.setSystemTime(new Date('2026-03-15T00:00:00.000Z'))
+
+      const archiveIo = createIo()
+      await runCli(['memories', 'archive-stale', '--older-than-days', '60', '--json'], archiveIo.io)
+      const archiveResult = JSON.parse(archiveIo.getStdout().trim()) as {
+        olderThanDays: number
+        total: number
+        items: Array<{ id: string; status: string }>
+      }
+
+      expect(archiveResult.olderThanDays).toBe(60)
+      expect(archiveResult.total).toBe(1)
+      expect(archiveResult.items[0]?.id).toBe(created.memory.id)
+      expect(archiveResult.items[0]?.status).toBe('archived')
     })
   })
 

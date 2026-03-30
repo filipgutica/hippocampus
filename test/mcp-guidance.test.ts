@@ -125,8 +125,10 @@ describe('MCP guidance resource', () => {
       })
       const policyText = getFirstTextContent(policyResult.content)
       const policy = JSON.parse(policyText) as {
+        policyVersion: string
         guidanceResourceUri: string
         guidanceArtifact: string
+        matchingRules: string[]
         sourceTypeDefinitions: Array<{ value: string; description: string }>
         statusDefinitions: Array<{ value: string; description: string }>
         contradictionRules: string[]
@@ -135,6 +137,7 @@ describe('MCP guidance resource', () => {
         resources: Array<{ role: string; uri: string; artifact: string; title: string }>
       }
 
+      expect(policy.policyVersion).toBe('3')
       expect(policy.guidanceResourceUri).toBe(runtimeMemoryPolicyResource.resourceUri)
       expect(policy.guidanceArtifact).toBe(runtimeMemoryPolicyResource.artifact)
       expect(policy.canonicalPolicy).toEqual({
@@ -175,7 +178,9 @@ describe('MCP guidance resource', () => {
         'archived',
         'deleted',
       ])
+      expect(policy.matchingRules.some(rule => rule.includes('may be archived after 90 days'))).toBe(true)
       expect(policy.contradictionRules.some(rule => rule.includes('supersededBy'))).toBe(true)
+      expect(policy.contradictionRules.some(rule => rule.includes('does not resurrect'))).toBe(true)
 
       const tools = await client.listTools()
       const searchTool = tools.tools.find(item => item.name === 'memory-search')

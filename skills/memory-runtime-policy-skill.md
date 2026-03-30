@@ -24,7 +24,7 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - In v1, subject matching is exact after normalization, so search with the clearest likely durable subject.
 
 ## Recommended kinds
-- Prefer stable kind names unless a more specific kind is clearly warranted: `preference`, `convention`, `workflow`, `project-fact`, `tooling`.
+- `kind` is a free-form string in the current model; prefer stable names unless a more specific kind is clearly warranted: `preference`, `convention`, `workflow`, `project-fact`, `tooling`.
 - Inconsistent kind naming silently splits durable memories into separate buckets that will not surface together.
 
 ## Source Types
@@ -38,6 +38,7 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - `suppressed`: contradicted or otherwise no longer trustworthy for normal retrieval.
 - `archived`: historical and retained for context, but not normally retrieved.
 - `deleted`: removed through an explicit operator workflow.
+- Stale `candidate` and `active` memories may be archived automatically before normal retrieval.
 
 ## Reinforcement and promotion
 - Exact matching only treats `candidate` and `active` memories as live.
@@ -50,7 +51,8 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - Use contradiction when an existing memory is no longer trustworthy and should point to newer state.
 - Contradicting a memory suppresses the old memory, creates a new active replacement, and links the old one through `supersededBy`.
 - `memory-get` returns the old memory as stored and embeds the full direct successor as `supersededByMemory` when that link exists.
-- Contradiction is explicit in v1; there is no autonomous suppression or archival engine yet.
+- Contradiction is explicit in v1; archived memories are historical and not resurrected by reinforcement.
+- If an archived memory is contradicted, create a new active replacement rather than reviving the archived record.
 
 ## Choose scope deliberately
 - Use `repo` for repository-specific conventions, workflows, and stable project facts.

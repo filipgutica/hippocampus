@@ -2,6 +2,7 @@ import yargs from 'yargs'
 import { buildApp, type RuntimeApp } from '../app/build-app.js'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../memory/dto/apply-observation.dto.js'
+import type { SearchMatchMode } from '../memory/dto/search-memories.dto.js'
 import type { MemorySourceType } from '../memory/types/memory.types.js'
 import { resolveRepoScopeId } from '../repos/types.js'
 import { runApplyCommand } from './commands/apply.command.js'
@@ -34,6 +35,14 @@ type ApplyArgs = ScopeArgs &
     details?: string
     input?: string
     inputFile?: string
+  }
+
+type SearchArgs = ScopeArgs &
+  JsonOption & {
+    kind?: string
+    subject?: string
+    limit?: number
+    matchMode?: SearchMatchMode
   }
 
 // eslint-disable-next-line no-unused-vars
@@ -182,23 +191,29 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('limit', {
             type: 'number',
           })
+          .option('match-mode', {
+            type: 'string',
+            choices: ['exact', 'hybrid'] as const,
+          })
           .option('json', {
             type: 'boolean',
             default: false,
           }),
       handler: async args => {
+        const searchArgs = args as SearchArgs
         await withRuntimeApp(
           app =>
             runSearchCommand(
               app,
               {
-                scope: resolveScope(args),
-                kind: args.kind ?? null,
-                subject: args.subject ?? null,
-                limit: args.limit ?? null,
+                scope: resolveScope(searchArgs),
+                kind: searchArgs.kind ?? null,
+                subject: searchArgs.subject ?? '',
+                limit: searchArgs.limit ?? null,
+                matchMode: searchArgs.matchMode ?? null,
               },
               io,
-              args.json ?? false,
+              searchArgs.json ?? false,
             ),
         )
       },

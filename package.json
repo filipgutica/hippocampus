@@ -15,6 +15,7 @@
     "pack:validate": "pnpm build && node ./scripts/validate-pack.mjs",
     "smoke:init": "node ./scripts/smoke-init.mjs",
     "smoke:mcp": "node ./scripts/smoke-mcp.mjs",
+    "smoke:semantic": "pnpm build && node ./scripts/smoke-semantic.mjs",
     "start:cli": "node ./dist/index.js",
     "start:mcp": "node ./dist/index.js mcp serve",
     "test": "vitest run",
@@ -22,6 +23,7 @@
     "typecheck:test": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.24.1",
     "better-sqlite3": "^12.2.0",
     "yargs": "^18.0.0",

@@ -117,6 +117,48 @@ export const migrations: Migration[] = [
         WHERE status IN ('candidate', 'active');
     `,
   },
+  {
+    version: 6,
+    name: 'memory_embeddings',
+    up: `
+      CREATE TABLE IF NOT EXISTS memory_embeddings (
+        memory_id TEXT PRIMARY KEY REFERENCES memories(id),
+        model_id TEXT NOT NULL,
+        embedding_json TEXT NOT NULL,
+        source_text_hash TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model_updated
+        ON memory_embeddings(model_id, updated_at DESC);
+    `,
+  },
+  {
+    version: 7,
+    name: 'memory_embeddings_model_fingerprint',
+    up: `
+      ALTER TABLE memory_embeddings ADD COLUMN model_fingerprint TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
+    version: 8,
+    name: 'memory_retrieval_strength_and_reinforcement_rename',
+    up: `
+      ALTER TABLE memories ADD COLUMN last_reinforced_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE memories ADD COLUMN retrieval_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE memories ADD COLUMN last_retrieved_at TEXT;
+      ALTER TABLE memories ADD COLUMN strength REAL NOT NULL DEFAULT 1.0;
+
+      UPDATE memories
+      SET last_reinforced_at = last_observed_at
+      WHERE last_reinforced_at = '';
+
+      DROP INDEX IF EXISTS idx_memories_live_last_observed_created;
+      CREATE INDEX IF NOT EXISTS idx_memories_live_last_reinforced_created
+        ON memories(status, last_reinforced_at, created_at)
+        WHERE status IN ('candidate', 'active');
+    `,
+  },
 ]
 
 export const runMigrations = (db: InstanceType<typeof Database>): void => {

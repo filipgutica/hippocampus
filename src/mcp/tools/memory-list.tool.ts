@@ -10,10 +10,10 @@ export const registerMemoryListTool = (server: McpServer, memoryService: MemoryS
     {
       description: normalizeWhitespace(`
         Inspect active memories already stored in one
-        explicit scope for orientation or debugging. Do not
-        use this as the normal retrieval path for task
-        decisions; use \`memory-search\`, including
-        scope-plus-kind queries for broad recall.
+        explicit scope for orientation, debugging, or broad
+        recall by memory class. Use this when you want
+        scope-plus-kind browsing. Use \`memory-search\`
+        when you have a specific subject query.
       `),
       inputSchema: {
         scope: mcpScopeSchema,

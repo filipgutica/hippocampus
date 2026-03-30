@@ -133,9 +133,9 @@ describe('MCP memory management tools', () => {
       expect(historyTool).toBeDefined()
       expect(applyTool).toBeDefined()
       expect(contradictTool).toBeDefined()
-      expect(searchTool?.description).toContain('kind-only search is the broad-recall pattern')
-      expect(listTool?.description).toContain('orientation or debugging')
-      expect(listTool?.description).toContain('Do not use this as the normal retrieval path')
+      expect(searchTool?.description).toContain('always provide `subject`')
+      expect(listTool?.description).toContain('broad recall by memory class')
+      expect(listTool?.description).toContain('scope-plus-kind browsing')
       expect(getTool?.description).toContain('including non-active memories')
       expect(historyTool?.description).toContain('later archival history')
       expect(applyTool?.description).toContain('call `memory-get-policy` first')
@@ -234,6 +234,7 @@ describe('MCP memory management tools', () => {
         arguments: {
           scope: { type: 'repo', id: '/tmp/example-repo' },
           subject: 'prefer pnpm',
+          matchMode: 'exact',
           limit: 10,
         },
       })
@@ -244,6 +245,7 @@ describe('MCP memory management tools', () => {
         arguments: {
           scope: { type: 'repo', id: '/tmp/example-repo' },
           subject: 'prefer npm',
+          matchMode: 'exact',
           limit: 10,
         },
       })

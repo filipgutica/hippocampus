@@ -20,7 +20,7 @@ export class InitService {
     fs.mkdirSync(this.paths.home, { recursive: true })
 
     const existingConfig = readConfig(this.paths.configFile)
-    const config = existingConfig ?? defaultConfig(this.paths.dbFile)
+    const config = existingConfig ?? defaultConfig({ dbFile: this.paths.dbFile })
     if (!existingConfig) {
       writeConfig(this.paths.configFile, config)
     }

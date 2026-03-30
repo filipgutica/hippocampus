@@ -9,7 +9,7 @@ export const runSearchCommand = async (
   io: CliIO,
   json = false,
 ): Promise<CliResult> => {
-  const result = app.memoryService.searchMemories(input)
+  const result = await app.memoryService.searchMemories(input)
 
   writeOutput(io, json ? result : formatSearchResult(result), json)
   return { code: 0 }

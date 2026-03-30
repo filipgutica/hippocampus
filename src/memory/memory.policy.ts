@@ -59,6 +59,11 @@ export const ACTIVE_ARCHIVE_STALE_AFTER_DAYS = 90
 export const CANDIDATE_ARCHIVE_STALE_AFTER_DAYS = 90
 export const AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS = 24
 export const AUTO_ARCHIVE_SWEEP_LIMIT = 50
+export const RETRIEVAL_DECAY_RATE = 0.95
+export const RETRIEVAL_BOOST_THRESHOLD = 3
+export const RETRIEVAL_BOOST_FACTOR = 1.1
+export const RETRIEVAL_STRENGTH_FLOOR = 1.0
+export const RETRIEVAL_STRENGTH_CAP = 5
 
 export const getInitialMemoryStatus = (sourceType: MemorySourceType): MemoryStatus =>
   sourceType === 'observed_pattern' ? 'candidate' : 'active'
@@ -68,6 +73,65 @@ export const isLiveMemoryStatus = (status: MemoryStatus): boolean => status === 
 export const isRetrievableMemoryStatus = (status: MemoryStatus): boolean => status === 'active'
 
 export const capReinforcementValue = (value: number): number => Math.min(value, REINFORCEMENT_CAP)
+
+const clampRetrievalStrength = (value: number): number =>
+  Math.min(RETRIEVAL_STRENGTH_CAP, Math.max(RETRIEVAL_STRENGTH_FLOOR, value))
+
+const getDaysSince = ({ now, since }: { now: string; since: string }): number => {
+  const elapsedMs = new Date(now).getTime() - new Date(since).getTime()
+  if (elapsedMs <= 0) {
+    return 0
+  }
+
+  return elapsedMs / (24 * 60 * 60 * 1000)
+}
+
+export const getEffectiveRetrievalStrength = ({
+  strength,
+  lastRetrievedAt,
+  now,
+}: {
+  strength: number
+  lastRetrievedAt: string | null
+  now: string
+}): number => {
+  if (!lastRetrievedAt) {
+    return clampRetrievalStrength(strength)
+  }
+
+  const daysSinceLastRetrieved = getDaysSince({ now, since: lastRetrievedAt })
+  return clampRetrievalStrength(strength * Math.pow(RETRIEVAL_DECAY_RATE, daysSinceLastRetrieved))
+}
+
+export const applyRetrievalAccess = (
+  input: {
+    retrievalCount: number
+    lastRetrievedAt: string | null
+    strength: number
+    now: string
+  },
+): {
+  retrievalCount: number
+  lastRetrievedAt: string
+  strength: number
+} => {
+  const decayedStrength = getEffectiveRetrievalStrength({
+    strength: input.strength,
+    lastRetrievedAt: input.lastRetrievedAt,
+    now: input.now,
+  })
+  const retrievalCount = input.retrievalCount + 1
+  const boostedStrength =
+    retrievalCount >= RETRIEVAL_BOOST_THRESHOLD && retrievalCount % RETRIEVAL_BOOST_THRESHOLD === 0
+      ? decayedStrength * RETRIEVAL_BOOST_FACTOR
+      : decayedStrength
+
+  return {
+    retrievalCount,
+    lastRetrievedAt: input.now,
+    strength: clampRetrievalStrength(boostedStrength),
+  }
+}
 
 export const pickStrongerSourceType = (
   current: MemorySourceType,

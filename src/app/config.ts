@@ -7,7 +7,7 @@ export type AppConfig = {
   createdAt: string
 }
 
-export const defaultConfig = (dbFile: string): AppConfig => ({
+export const defaultConfig = ({ dbFile }: { dbFile: string }): AppConfig => ({
   schemaVersion: 1,
   dbFile,
   createdAt: new Date().toISOString(),

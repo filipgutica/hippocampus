@@ -7,7 +7,8 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runCli } from '../src/cli/cli.js'
-import { buildApp } from '../src/app/build-app.js'
+import { buildApp, type RuntimeApp } from '../src/app/build-app.js'
+import { runSearchCommand } from '../src/cli/commands/search.command.js'
 import { createMcpServer } from '../src/mcp/server.js'
 
 const tempDirs: string[] = []
@@ -118,9 +119,10 @@ describe('runCli', () => {
       }
 
       try {
-        const result = app.memoryService.searchMemories({
+        const result = await app.memoryService.searchMemories({
           scope: { type: 'repo', id: scopeId },
           subject: 'prefer pnpm',
+          matchMode: 'exact',
           limit: 10,
         })
 
@@ -133,6 +135,84 @@ describe('runCli', () => {
       expect(initIo.getStderr()).toBe('')
       expect(applyIo.getStderr()).toBe('')
     })
+  })
+
+  it('requires subject for the CLI search command', async () => {
+    const home = createTempDir()
+
+    await withAppHome(home, async () => {
+      await runCli(['init'], createIo().io)
+
+      await expect(
+        runCli(['search', '--scope-type', 'repo', '--scope-id', '/tmp/example-repo'], createIo().io),
+      ).rejects.toThrow('subject must not be empty for memory-search.')
+    })
+  })
+
+  it('applies JSON input without requiring a CLI subject flag', async () => {
+    const home = createTempDir()
+
+    await withAppHome(home, async () => {
+      const initIo = createIo()
+      await runCli(['init'], initIo.io)
+
+      const applyIo = createIo()
+      await runCli(
+        [
+          'apply',
+          '--input',
+          JSON.stringify({
+            scope: { type: 'repo', id: '/tmp/example-repo' },
+            kind: 'preference',
+            subject: 'Prefer pnpm',
+            statement: 'Use pnpm for this repo.',
+            sourceType: 'explicit_user_statement',
+          }),
+          '--json',
+        ],
+        applyIo.io,
+      )
+
+      const created = JSON.parse(applyIo.getStdout().trim()) as {
+        memory?: { id: string; subject: string }
+      }
+
+      expect(created.memory?.id).toBeTruthy()
+      expect(created.memory?.subject).toBe('Prefer pnpm')
+      expect(applyIo.getStderr()).toBe('')
+      expect(initIo.getStderr()).toBe('')
+    })
+  })
+
+  it('includes degraded-mode guidance in human-readable search output', async () => {
+    const io = createIo()
+
+    await runSearchCommand(
+      {
+        memoryService: {
+          searchMemories: async () => ({
+            items: [],
+            total: 0,
+            matchMode: 'exact',
+            requestedMatchMode: 'hybrid',
+            effectiveMatchMode: 'exact',
+            fallbackReason: 'Semantic retrieval unavailable; returned exact results only.',
+          }),
+        },
+      } as unknown as RuntimeApp,
+      {
+        scope: { type: 'repo', id: '/tmp/example-repo' },
+        subject: 'prefer pnpm',
+        limit: 10,
+      },
+      io.io,
+      false,
+    )
+
+    expect(io.getStdout()).toContain('requestedMatchMode: hybrid')
+    expect(io.getStdout()).toContain('effectiveMatchMode: exact')
+    expect(io.getStdout()).toContain('notice: Semantic retrieval unavailable; returned exact results only.')
+    expect(io.getStdout()).toContain('guidance: for broader recall, use memory-list (memories list) with scope + kind')
   })
 
   it('lists, inspects, shows history, and deletes memories via the CLI', async () => {
@@ -209,9 +289,10 @@ describe('runCli', () => {
       }
 
       try {
-        const result = app.memoryService.searchMemories({
+        const result = await app.memoryService.searchMemories({
           scope: { type: 'repo', id: scopeId },
           subject: 'prefer pnpm',
+          matchMode: 'exact',
           limit: 10,
         })
 
@@ -472,6 +553,7 @@ describe('runCli', () => {
           arguments: {
             scope: { type: 'repo', id: repoRoot },
             subject: 'prefer pnpm',
+            matchMode: 'exact',
             limit: 10,
           },
         })
@@ -539,14 +621,16 @@ describe('runCli', () => {
         await mcp.server.connect(serverTransport)
         await client.connect(clientTransport)
 
-        const repoRootSearch = app.memoryService.searchMemories({
+        const repoRootSearch = await app.memoryService.searchMemories({
           scope: { type: 'repo', id: repoRoot },
           subject: 'run tests before commit',
+          matchMode: 'exact',
           limit: 10,
         })
-        const repoSubdirSearch = app.memoryService.searchMemories({
+        const repoSubdirSearch = await app.memoryService.searchMemories({
           scope: { type: 'repo', id: repoSubdir },
           subject: 'run tests before commit',
+          matchMode: 'exact',
           limit: 10,
         })
 
@@ -564,14 +648,16 @@ describe('runCli', () => {
           },
         })
 
-        const rootScopedMemory = app.memoryService.searchMemories({
+        const rootScopedMemory = await app.memoryService.searchMemories({
           scope: { type: 'repo', id: repoRoot },
           subject: 'use package-local scripts',
+          matchMode: 'exact',
           limit: 10,
         })
-        const subdirScopedMemory = app.memoryService.searchMemories({
+        const subdirScopedMemory = await app.memoryService.searchMemories({
           scope: { type: 'repo', id: repoSubdir },
           subject: 'use package-local scripts',
+          matchMode: 'exact',
           limit: 10,
         })
 

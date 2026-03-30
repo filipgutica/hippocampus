@@ -13,7 +13,7 @@ describe('guidance artifacts', () => {
 
     expect(guidance).toContain('# Hippocampus Runtime Memory Policy')
     expect(guidance).toContain('Use this policy first when deciding whether to retrieve or save memory through Hippocampus.')
-    expect(guidance).toContain('Kind-only recall is a `memory-search` pattern')
+    expect(guidance).toContain('Use `memory-list` for broader recall with `scope + kind`')
     expect(guidance).toContain('## Recommended kinds')
     expect(guidance).toContain('canonical absolute path to the repo root')
     expect(guidance).toContain('## Source Types')

@@ -11,25 +11,29 @@ export const registerMemorySearchTool = (server: McpServer, memoryService: Memor
       description: normalizeWhitespace(`
         Default retrieval tool for one explicit scope.
         Use when a durable preference, convention, workflow,
-        or project fact may change the next action. Keep
-        queries narrow with \`subject\` when possible; kind-only
-        search is the broad-recall pattern when you need
-        a class of memories. Normal results only include
-        active memories.
+        or project fact may change the next action. This is
+        a query-based tool, so always provide \`subject\`.
+        For broader recall across a class of memories, use
+        \`memory-list\` with scope plus kind. Normal results
+        only include active memories. Search uses hybrid
+        retrieval by default and degrades to exact if semantic
+        retrieval is unavailable.
       `),
       inputSchema: {
         scope: mcpScopeSchema,
         kind: z.string().min(1).optional(),
-        subject: z.string().optional(),
+        subject: z.string().min(1),
         limit: z.number().int().positive().max(100).optional(),
+        matchMode: z.enum(['exact', 'hybrid']).optional(),
       },
     },
     async input => {
-      const result = memoryService.searchMemories({
+      const result = await memoryService.searchMemories({
         scope: input.scope,
         kind: input.kind ?? null,
-        subject: input.subject ?? null,
+        subject: input.subject,
         limit: input.limit ?? null,
+        matchMode: input.matchMode ?? null,
       })
 
       return {

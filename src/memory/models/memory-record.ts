@@ -16,7 +16,10 @@ export type MemoryRecord = {
   policyVersion: string
   createdAt: string
   updatedAt: string
-  lastObservedAt: string
+  lastReinforcedAt: string
+  retrievalCount: number
+  lastRetrievedAt: string | null
+  strength: number
   status: MemoryStatus
   supersededBy: string | null
   deletedAt: string | null

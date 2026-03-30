@@ -107,7 +107,10 @@ const formatMemory = (memory: MemoryRecord): string =>
     `supersededBy: ${memory.supersededBy ?? '-'}`,
     `createdAt: ${memory.createdAt}`,
     `updatedAt: ${memory.updatedAt}`,
-    `lastObservedAt: ${memory.lastObservedAt}`,
+    `lastReinforcedAt: ${memory.lastReinforcedAt}`,
+    `retrievalCount: ${memory.retrievalCount}`,
+    `lastRetrievedAt: ${memory.lastRetrievedAt ?? '-'}`,
+    `strength: ${memory.strength}`,
     `deletedAt: ${memory.deletedAt ?? '-'}`,
   ].join('\n')
 
@@ -151,7 +154,19 @@ const formatMemoryCollection = (result: SearchResult | MemoryListResult): string
   ].join('\n\n')
 }
 
-export const formatSearchResult = (result: SearchResult): string => formatMemoryCollection(result)
+export const formatSearchResult = (result: SearchResult): string => {
+  const header = [
+    `requestedMatchMode: ${result.requestedMatchMode}`,
+    `effectiveMatchMode: ${result.effectiveMatchMode}`,
+  ]
+
+  if (result.fallbackReason) {
+    header.push(`notice: ${result.fallbackReason}`)
+    header.push('guidance: for broader recall, use memory-list (memories list) with scope + kind')
+  }
+
+  return [header.join('\n'), '', formatMemoryCollection(result)].join('\n')
+}
 
 export const formatMemoryListResult = (result: MemoryListResult): string => formatMemoryCollection(result)
 
@@ -216,24 +231,6 @@ export const formatPolicyResult = (result: GetPolicyResult): string =>
     `policyVersion: ${result.policyVersion}`,
     `description: ${result.description}`,
     '',
-    'acceptanceRules:',
-    ...result.acceptanceRules.map(rule => `- ${rule}`),
-    '',
-    'matchingRules:',
-    ...result.matchingRules.map(rule => `- ${rule}`),
-    '',
-    'rankingRules:',
-    ...result.rankingRules.map(rule => `- ${rule}`),
-    '',
-    'sourceTypeDefinitions:',
-    ...result.sourceTypeDefinitions.map(definition => `- ${definition.value}: ${definition.description}`),
-    '',
-    'statusDefinitions:',
-    ...result.statusDefinitions.map(definition => `- ${definition.value}: ${definition.description}`),
-    '',
-    'contradictionRules:',
-    ...result.contradictionRules.map(rule => `- ${rule}`),
-    '',
     'canonicalPolicy:',
     `- title: ${result.canonicalPolicy.title}`,
     `- uri: ${result.canonicalPolicy.uri}`,
@@ -253,9 +250,6 @@ export const formatPolicyResult = (result: GetPolicyResult): string =>
       `  uri: ${resource.uri}`,
       `  artifact: ${resource.artifact}`,
     ]),
-    '',
-    `guidanceResourceUri: ${result.guidanceResourceUri}`,
-    `guidanceArtifact: ${result.guidanceArtifact}`,
   ].join('\n')
 
 export const formatMemoryRecord = (memory: MemoryGetResult): string =>

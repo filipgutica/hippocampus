@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { AppError } from '../common/errors.js'
 import { runTransaction } from '../common/db/db.js'
 import { resolveCanonicalScopeId } from '../common/resolve-canonical-scope-id.js'
+import { MemoryEmbeddingRepository } from './memory-embedding.repository.js'
+import type { EmbeddingProvider } from './local-embedding-provider.js'
 import { normalizeSubject } from './subject-normalizer.js'
 import type { ApplyObservationInput, ObservationSource } from './dto/apply-observation.dto.js'
 import type { ContradictMemoryInput } from './dto/contradict-memory.dto.js'
@@ -9,26 +11,26 @@ import type { DeleteMemoryInput } from './dto/delete-memory.dto.js'
 import type { GetPolicyResult } from './dto/get-policy.dto.js'
 import type { ListMemoriesInput } from './dto/list-memories.dto.js'
 import type { MemoryIdInput } from './dto/memory-id.dto.js'
-import type { SearchMemoriesInput } from './dto/search-memories.dto.js'
+import type { SearchMatchMode, SearchMemoriesInput } from './dto/search-memories.dto.js'
 import { validateScope } from './memory-scope.policy.js'
 import {
   ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
   AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS,
   AUTO_ARCHIVE_SWEEP_LIMIT,
-  CANDIDATE_PROMOTION_THRESHOLD,
-  REINFORCEMENT_CAP,
+  applyRetrievalAccess,
   capReinforcementValue,
   evaluateMemoryPolicy,
   getInitialMemoryStatus,
+  getEffectiveRetrievalStrength,
   memorySourceTypeDefinitions,
-  memoryStatusDefinitions,
   pickStrongerSourceType,
   resolveReinforcedStatus,
 } from './memory.policy.js'
-import { rankMemories } from './memory-ranking.policy.js'
+import { compareMemoryRank, rankMemories } from './memory-ranking.policy.js'
 import { MemoryRepository } from './memory.repository.js'
 import { MemoryEventRepository } from './memory-event.repository.js'
 import { MemoryRuntimeStateRepository } from './memory-runtime-state.repository.js'
+import { cosineSimilarity, getSemanticSourceText, getSourceTextHash, parseEmbedding } from './semantic-search.js'
 import type {
   ArchiveStaleMemoriesResult,
   ApplyMemoryResult,
@@ -49,11 +51,18 @@ import {
 import type { ScopeRef } from '../common/types/scope-ref.js'
 
 type MemoryServiceDeps = {
+  embeddingProvider: EmbeddingProvider
+  memoryEmbeddingRepository: MemoryEmbeddingRepository
   memoryRepository: MemoryRepository
   memoryEventRepository: MemoryEventRepository
   memoryRuntimeStateRepository: MemoryRuntimeStateRepository
   policyVersion: string
   db: InstanceType<typeof Database>
+}
+
+type ScoredMemory = {
+  memory: MemoryRecord
+  score: number
 }
 
 const toPositiveLimit = (limit: number | null | undefined): number => {
@@ -112,6 +121,8 @@ const canonicalizeScope = (scope: ScopeRef): ScopeRef => ({
 const toContradictionReason = ({ replacementMemoryId }: { replacementMemoryId: string }): string =>
   `Memory was contradicted and superseded by ${replacementMemoryId}.`
 
+const SEMANTIC_MIN_SCORE = 0.25
+
 const toReplacementReason = ({ oldMemoryId }: { oldMemoryId: string }): string =>
   `Memory was created as the active replacement for contradicted memory ${oldMemoryId}.`
 
@@ -123,8 +134,8 @@ const toArchiveReason = ({
   automatic: boolean
 }): string =>
   automatic
-    ? `Memory was archived automatically after ${olderThanDays} days without reinforcement or observation.`
-    : `Memory was archived by operator sweep after ${olderThanDays} days without reinforcement or observation.`
+    ? `Memory was archived automatically after ${olderThanDays} days without reinforcement.`
+    : `Memory was archived by operator sweep after ${olderThanDays} days without reinforcement.`
 
 const subtractDays = ({ timestamp, days }: { timestamp: string; days: number }): string => {
   const date = new Date(timestamp)
@@ -181,6 +192,63 @@ const toParsedEvent = (event: {
   createdAt: event.createdAt,
 })
 
+const toMatchMode = (value: SearchMatchMode | null | undefined): SearchMatchMode => value ?? 'hybrid'
+
+const isSemanticModelUnavailableError = (error: unknown): error is AppError =>
+  error instanceof AppError && error.code === 'SEMANTIC_MODEL_NOT_AVAILABLE'
+
+const toSearchFallbackReason = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : 'unknown error'
+  return `Semantic retrieval unavailable; returned exact results only. ${message}`
+}
+
+const compareSearchMemories = ({
+  left,
+  right,
+  now,
+}: {
+  left: MemoryRecord
+  right: MemoryRecord
+  now: string
+}): number => {
+  const leftStrength = getEffectiveRetrievalStrength({
+    strength: left.strength,
+    lastRetrievedAt: left.lastRetrievedAt,
+    now,
+  })
+  const rightStrength = getEffectiveRetrievalStrength({
+    strength: right.strength,
+    lastRetrievedAt: right.lastRetrievedAt,
+    now,
+  })
+
+  if (rightStrength !== leftStrength) {
+    return rightStrength - leftStrength
+  }
+
+  return compareMemoryRank(left, right)
+}
+
+const compareScoredMemories = ({
+  left,
+  right,
+  now,
+}: {
+  left: ScoredMemory
+  right: ScoredMemory
+  now: string
+}): number => {
+  if (right.score !== left.score) {
+    return right.score - left.score
+  }
+
+  return compareSearchMemories({
+    left: left.memory,
+    right: right.memory,
+    now,
+  })
+}
+
 export class MemoryService {
   private readonly deps: MemoryServiceDeps
 
@@ -208,6 +276,20 @@ export class MemoryService {
       ...memory,
       supersededByMemory,
     }
+  }
+
+  private assertMemoryEditable(id: string): MemoryRecord {
+    const memory = this.deps.memoryRepository.getById(id)
+    if (!memory) {
+      throw new AppError('MEMORY_NOT_FOUND', `Memory not found: ${id}`)
+    }
+    if (memory.status === 'deleted') {
+      throw new AppError('MEMORY_ALREADY_DELETED', `Memory already deleted: ${memory.id}`)
+    }
+    if (memory.supersededBy) {
+      throw new AppError('MEMORY_ALREADY_SUPERSEDED', `Memory already superseded: ${memory.id}`)
+    }
+    return memory
   }
 
   private maybeArchiveStaleMemories(): void {
@@ -286,6 +368,22 @@ export class MemoryService {
       const archivedMemories: MemoryRecord[] = []
 
       for (const staleMemory of memoriesToArchive) {
+        const normalizedStrength = getEffectiveRetrievalStrength({
+          strength: staleMemory.strength,
+          lastRetrievedAt: staleMemory.lastRetrievedAt,
+          now,
+        })
+
+        if (normalizedStrength !== staleMemory.strength) {
+          this.deps.memoryRepository.updateRetrievalState({
+            memory: staleMemory,
+            retrievalCount: staleMemory.retrievalCount,
+            lastRetrievedAt: staleMemory.lastRetrievedAt,
+            strength: normalizedStrength,
+            now,
+          })
+        }
+
         const archivedMemory = this.deps.memoryRepository.archiveMemoryIfLive({
           id: staleMemory.id,
           now,
@@ -322,6 +420,116 @@ export class MemoryService {
         total: archivedMemories.length,
       }
     })
+  }
+
+  private async ensureMemoryEmbedding(memory: MemoryRecord, modelFingerprint: string): Promise<number[]> {
+    const sourceText = getSemanticSourceText(memory)
+    const sourceTextHash = getSourceTextHash(sourceText)
+    const existing = this.deps.memoryEmbeddingRepository.getByMemoryId(memory.id)
+
+    if (
+      existing &&
+      existing.modelId === this.deps.embeddingProvider.getModelId() &&
+      existing.modelFingerprint === modelFingerprint &&
+      existing.sourceTextHash === sourceTextHash
+    ) {
+      return parseEmbedding(existing.embeddingJson)
+    }
+
+    const embedding = await this.deps.embeddingProvider.embed(sourceText)
+
+    this.deps.memoryEmbeddingRepository.upsert({
+      memoryId: memory.id,
+      modelId: this.deps.embeddingProvider.getModelId(),
+      modelFingerprint,
+      embeddingJson: JSON.stringify(embedding),
+      sourceTextHash,
+      updatedAt: new Date().toISOString(),
+    })
+
+    return embedding
+  }
+
+  private async searchBySemanticSimilarity(input: {
+    scope: ScopeRef
+    kind: string | null
+    queryEmbedding: number[]
+    now: string
+  }): Promise<MemoryRecord[]> {
+    const candidates = this.deps.memoryRepository.list({
+      scope: input.scope,
+      kind: input.kind,
+      limit: null,
+    })
+
+    if (candidates.length === 0) {
+      return []
+    }
+
+    const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
+    const embeddings = await Promise.all(
+      candidates.map(candidate => this.ensureMemoryEmbedding(candidate, modelFingerprint)),
+    )
+
+    const scored: ScoredMemory[] = candidates
+      .map((memory, i) => ({ memory, score: cosineSimilarity(input.queryEmbedding, embeddings[i]) }))
+      .filter(item => item.score >= SEMANTIC_MIN_SCORE)
+
+    return scored
+      .sort((left, right) =>
+        compareScoredMemories({
+          left,
+          right,
+          now: input.now,
+        }),
+      )
+      .map(item => item.memory)
+  }
+
+  private getExactSearchItems(input: {
+    scope: ScopeRef
+    kind: string | null
+    subject: string
+    now: string
+  }): MemoryRecord[] {
+    return this.deps.memoryRepository
+      .search({
+        scope: input.scope,
+        kind: input.kind,
+        subject: input.subject,
+      })
+      .sort((left, right) =>
+        compareSearchMemories({
+          left,
+          right,
+          now: input.now,
+        }),
+      )
+  }
+
+  private persistSearchRetrievalState(items: MemoryRecord[], now: string): MemoryRecord[] {
+    if (items.length === 0) {
+      return items
+    }
+
+    return runTransaction(this.deps.db, () =>
+      items.map(memory => {
+        const nextRetrievalState = applyRetrievalAccess({
+          retrievalCount: memory.retrievalCount,
+          lastRetrievedAt: memory.lastRetrievedAt,
+          strength: memory.strength,
+          now,
+        })
+
+        return this.deps.memoryRepository.updateRetrievalState({
+          memory,
+          retrievalCount: nextRetrievalState.retrievalCount,
+          lastRetrievedAt: nextRetrievalState.lastRetrievedAt,
+          strength: nextRetrievalState.strength,
+          now,
+        })
+      }),
+    )
   }
 
   applyObservation(input: ApplyObservationInput): ApplyMemoryResult {
@@ -434,24 +642,90 @@ export class MemoryService {
     })
   }
 
-  searchMemories(input: SearchMemoriesInput): SearchResult {
+  async searchMemories(input: SearchMemoriesInput): Promise<SearchResult> {
     const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
-    const subject = input.subject ? normalizeSubject(input.subject) : null
+    const requestedMatchMode = toMatchMode(input.matchMode)
+    const kind = input.kind?.trim() || null
+    const semanticQuery = ensureNonEmpty(input.subject, 'INVALID_SEARCH_SUBJECT', 'subject must not be empty for memory-search.')
+    const subject = normalizeSubject(semanticQuery)
+    const now = new Date().toISOString()
+
+    if (requestedMatchMode === 'exact') {
+      this.maybeArchiveStaleMemories()
+
+      const exactItems = this.getExactSearchItems({
+        scope,
+        kind,
+        subject,
+        now,
+      })
+      const finalItems = exactItems.slice(0, limit)
+      const returnedItems = this.persistSearchRetrievalState(finalItems, now)
+
+      return {
+        items: returnedItems,
+        total: exactItems.length,
+        matchMode: 'exact',
+        requestedMatchMode: 'exact',
+        effectiveMatchMode: 'exact',
+      }
+    }
+
+    let queryEmbedding: number[]
+
+    try {
+      queryEmbedding = await this.deps.embeddingProvider.embed(semanticQuery)
+    } catch (error) {
+      if (!isSemanticModelUnavailableError(error)) {
+        throw error
+      }
+
+      this.maybeArchiveStaleMemories()
+
+      const exactItems = this.getExactSearchItems({
+        scope,
+        kind,
+        subject,
+        now,
+      })
+      const finalItems = exactItems.slice(0, limit)
+      const returnedItems = this.persistSearchRetrievalState(finalItems, now)
+
+      return {
+        items: returnedItems,
+        total: exactItems.length,
+        matchMode: 'exact',
+        requestedMatchMode,
+        effectiveMatchMode: 'exact',
+        fallbackReason: toSearchFallbackReason(error),
+      }
+    }
 
     this.maybeArchiveStaleMemories()
 
-    const items = rankMemories(
-      this.deps.memoryRepository.search({
-        scope,
-        kind: input.kind?.trim() || null,
-        subject,
-      }),
-    )
+    const exactItems = this.getExactSearchItems({
+      scope,
+      kind,
+      subject,
+      now,
+    })
+    const semanticItems = await this.searchBySemanticSimilarity({
+      scope,
+      kind,
+      queryEmbedding,
+      now,
+    })
+    const items = [...exactItems, ...semanticItems.filter(memory => !exactItems.some(item => item.id === memory.id))]
+    const finalItems = items.slice(0, limit)
+    const returnedItems = this.persistSearchRetrievalState(finalItems, now)
 
     return {
-      items: items.slice(0, limit),
+      items: returnedItems,
       total: items.length,
+      matchMode: 'hybrid',
+      requestedMatchMode: 'hybrid',
+      effectiveMatchMode: 'hybrid',
     }
   }
 
@@ -542,16 +816,7 @@ export class MemoryService {
       throw new AppError('INVALID_MEMORY_ID', 'Memory id must not be empty.')
     }
 
-    const memory = this.deps.memoryRepository.getById(id)
-    if (!memory) {
-      throw new AppError('MEMORY_NOT_FOUND', `Memory not found: ${id}`)
-    }
-    if (memory.status === 'deleted') {
-      throw new AppError('MEMORY_ALREADY_DELETED', `Memory already deleted: ${memory.id}`)
-    }
-    if (memory.supersededBy) {
-      throw new AppError('MEMORY_ALREADY_SUPERSEDED', `Memory already superseded: ${memory.id}`)
-    }
+    const memory = this.assertMemoryEditable(id)
 
     const replacementScope = canonicalizeScope(validateScope(input.replacement.scope))
     if (replacementScope.type !== memory.scope.type || replacementScope.id !== memory.scope.id) {
@@ -580,16 +845,7 @@ export class MemoryService {
 
     this.maybeArchiveStaleMemories()
 
-    const currentMemory = this.deps.memoryRepository.getById(id)
-    if (!currentMemory) {
-      throw new AppError('MEMORY_NOT_FOUND', `Memory not found: ${id}`)
-    }
-    if (currentMemory.status === 'deleted') {
-      throw new AppError('MEMORY_ALREADY_DELETED', `Memory already deleted: ${currentMemory.id}`)
-    }
-    if (currentMemory.supersededBy) {
-      throw new AppError('MEMORY_ALREADY_SUPERSEDED', `Memory already superseded: ${currentMemory.id}`)
-    }
+    const currentMemory = this.assertMemoryEditable(id)
 
     const now = new Date().toISOString()
 
@@ -690,39 +946,7 @@ export class MemoryService {
     return {
       policyVersion: this.deps.policyVersion,
       description:
-        'Compact summary of Hippocampus acceptance, matching, ranking, and contradiction rules, plus canonical and supporting guidance resource pointers.',
-      acceptanceRules: [
-        'scope type and id must be valid',
-        'kind and statement must not be empty',
-        'empty normalized subjects are rejected',
-        'sourceType must be one of explicit_user_statement, observed_pattern, or tool_observation',
-      ],
-      matchingRules: [
-        'subject is normalized before lookup',
-        'matching uses exact normalized subject key in v1',
-        'repo scope ids are canonicalized by symlink resolution only; the service does not infer repo root from subdirectory paths',
-        'normal retrieval only returns active memories',
-        'matching only treats candidate and active memories as live for reinforcement and duplicate detection',
-        `candidate memories promote to active at reinforcement count >= ${CANDIDATE_PROMOTION_THRESHOLD}`,
-        `candidate and active memories may be archived after ${ACTIVE_ARCHIVE_STALE_AFTER_DAYS} days without observation`,
-      ],
-      rankingRules: [
-        'confidence desc',
-        'last observed at desc',
-        'reinforcement count desc',
-        'subject asc',
-        `confidence and reinforcement count are capped at ${REINFORCEMENT_CAP}`,
-      ],
-      sourceTypeDefinitions: memorySourceTypeDefinitions,
-      statusDefinitions: memoryStatusDefinitions,
-      contradictionRules: [
-        'find the memory id with memory-search or memory-list before calling memory-contradict',
-        'contradicting a memory suppresses the old memory and links it via supersededBy to the new active replacement',
-        'contradicting an archived memory creates a new active replacement; archival does not resurrect the old memory',
-        'memory-get returns supersededByMemory when a direct successor exists',
-      ],
-      guidanceArtifact: canonicalPolicy.artifact,
-      guidanceResourceUri: canonicalPolicy.uri,
+        'Canonical policy resources for Hippocampus runtime behavior. Read the returned resource URIs for retrieval, saving, scope, ranking, and contradiction guidance.',
       canonicalPolicy,
       supportingGuidance,
       resources: [runtimeMemoryPolicyResource, ...supportingGuidanceResources].map(resource => ({

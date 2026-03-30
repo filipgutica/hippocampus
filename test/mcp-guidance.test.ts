@@ -126,20 +126,14 @@ describe('MCP guidance resource', () => {
       const policyText = getFirstTextContent(policyResult.content)
       const policy = JSON.parse(policyText) as {
         policyVersion: string
-        guidanceResourceUri: string
-        guidanceArtifact: string
-        matchingRules: string[]
-        sourceTypeDefinitions: Array<{ value: string; description: string }>
-        statusDefinitions: Array<{ value: string; description: string }>
-        contradictionRules: string[]
+        description: string
         canonicalPolicy: { uri: string; artifact: string; title: string }
         supportingGuidance: Array<{ uri: string; artifact: string; title: string }>
         resources: Array<{ role: string; uri: string; artifact: string; title: string }>
       }
 
       expect(policy.policyVersion).toBe('3')
-      expect(policy.guidanceResourceUri).toBe(runtimeMemoryPolicyResource.resourceUri)
-      expect(policy.guidanceArtifact).toBe(runtimeMemoryPolicyResource.artifact)
+      expect(policy.description).toContain('Read the returned resource URIs')
       expect(policy.canonicalPolicy).toEqual({
         uri: runtimeMemoryPolicyResource.resourceUri,
         artifact: runtimeMemoryPolicyResource.artifact,
@@ -166,28 +160,13 @@ describe('MCP guidance resource', () => {
           title: memoryScopeGuidanceResource.title,
         },
       ])
-      expect(policy.sourceTypeDefinitions.map(item => item.value)).toEqual([
-        'explicit_user_statement',
-        'observed_pattern',
-        'tool_observation',
-      ])
-      expect(policy.statusDefinitions.map(item => item.value)).toEqual([
-        'candidate',
-        'active',
-        'suppressed',
-        'archived',
-        'deleted',
-      ])
-      expect(policy.matchingRules.some(rule => rule.includes('may be archived after 90 days'))).toBe(true)
-      expect(policy.contradictionRules.some(rule => rule.includes('supersededBy'))).toBe(true)
-      expect(policy.contradictionRules.some(rule => rule.includes('does not resurrect'))).toBe(true)
 
       const tools = await client.listTools()
       const searchTool = tools.tools.find(item => item.name === 'memory-search')
       const policyTool = tools.tools.find(item => item.name === 'memory-get-policy')
       const contradictTool = tools.tools.find(item => item.name === 'memory-contradict')
       expect(searchTool?.description).toContain('Default retrieval tool')
-      expect(searchTool?.description).toContain('kind-only search is the broad-recall pattern')
+      expect(searchTool?.description).toContain('always provide `subject`')
       expect(getScopeIdDescription(searchTool)).toContain('canonical absolute path to the repo root')
       expect(policyTool?.description).toContain('Start here once per session')
       expect(policyTool?.description).toContain('resource pointers')
@@ -198,6 +177,8 @@ describe('MCP guidance resource', () => {
         name: 'memory-search',
         arguments: {
           scope: { type: 'repo', id: '/tmp/example-repo' },
+          subject: 'prefer pnpm',
+          matchMode: 'exact',
           limit: 1,
         },
       })

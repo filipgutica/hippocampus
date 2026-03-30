@@ -16,12 +16,15 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 
 ## Keep retrieval narrow
 - Always choose scope explicitly.
-- Prefer adding `subject` when you have a likely durable topic in mind.
+- `memory-search` requires `subject`; use it when you have a likely durable topic in mind.
 - Add `kind` when you already know the class of memory you want.
-- Kind-only recall is a `memory-search` pattern: use `scope + kind` with no `subject` when you need a class of memories without falling back to a full list.
-- Use `memory-search` for task retrieval and `memory-list` only for orientation or debugging.
+- Use `memory-list` for broader recall with `scope + kind`.
+- Use `memory-search` for subject-based task retrieval and `memory-list` for orientation, debugging, or broad recall.
 - Normal retrieval only returns memories with `status = active`.
 - In v1, subject matching is exact after normalization, so search with the clearest likely durable subject.
+- `memory-search` uses hybrid retrieval by default and falls back to exact if semantic retrieval is unavailable.
+- If `memory-search` degrades to exact, broaden recall with `memory-list` using `scope + kind`.
+- Successful `memory-search` results update retrieval-side salience; `memory-list`, `memory-get`, and history reads do not.
 
 ## Recommended kinds
 - `kind` is a free-form string in the current model; prefer stable names unless a more specific kind is clearly warranted: `preference`, `convention`, `workflow`, `project-fact`, `tooling`.
@@ -46,6 +49,13 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - Both counters are capped at `5`.
 - A `candidate` memory promotes to `active` at `reinforcementCount >= 3`.
 - A stronger later `sourceType` can replace weaker provenance on reinforcement.
+- `lastReinforcedAt` tracks write-side reaffirmation only; it is distinct from retrieval activity.
+
+## Retrieval strength
+- `retrievalCount`, `lastRetrievedAt`, and `strength` are operational ranking signals, not evidence.
+- Only successful `memory-search` results update retrieval strength.
+- Retrieval strength decays over time from `lastRetrievedAt` and is used only as a ranking tie-break after exact/semantic relevance.
+- Automatic stale archival still keys off `lastReinforcedAt`, not recent retrieval.
 
 ## Contradiction and supersession
 - Use contradiction when an existing memory is no longer trustworthy and should point to newer state.
@@ -78,8 +88,10 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - If the fact is uncertain or still changing, wait until it stabilizes.
 
 ## Example flows
-- Retrieval flow: Before choosing a package manager command in a repo, search repo scope for subject `prefer pnpm` or do kind-only recall such as `kind = preference` when you need that class of memories. Only active memories will be returned.
+- Retrieval flow: Before choosing a package manager command in a repo, search repo scope for subject `prefer pnpm`. If search degrades to exact and you need broader recall, use `memory-list` with `kind = preference`. Only active memories will be returned.
 - Save flow: After confirming a repo convention like `This repository uses pnpm`, save it in repo scope with `sourceType = tool_observation`.
 - Pattern flow: If the user repeatedly corrects long answers toward shorter ones, save that as `sourceType = observed_pattern` and expect it to remain `candidate` until reinforced enough to promote.
 - Contradiction flow: If an old memory says `Use pnpm for this repo.` but the repo has moved to npm, contradict the old memory so it becomes `suppressed` and points to the new active replacement.
 - Skip flow: If you are in the middle of a one-off debugging session, do not save temporary stack traces, branch names, or test-specific notes.
+- Semantic search flow: `memory-search` uses cached `Xenova/bge-small-en-v1.5` artifacts under Hippocampus home and falls back to exact retrieval if semantic loading or download is unavailable.
+- Future note: a larger model may be appropriate for a future cloud/service offering, but that is not part of the local runtime policy today.

@@ -19,6 +19,13 @@ Hippocampus currently supports:
 
 Local state lives in `~/.hippocampus` by default. Set `HIPPOCAMPUS_HOME` to use a different location.
 
+Hybrid retrieval uses `Xenova/bge-small-en-v1.5` through Transformers.js. Model artifacts are cached automatically under Hippocampus home on first semantic use and reused across later runs:
+
+- `$HIPPOCAMPUS_HOME/cache/transformers/`
+- `~/.hippocampus/cache/transformers/` when `HIPPOCAMPUS_HOME` is unset
+
+Cold-cache semantic retrieval may need network access once. If semantic retrieval is unavailable, `memory-search` falls back to exact results and tells the caller to broaden recall with `memory-list`.
+
 Hippocampus is still pre-stable and local-only during development. The local SQLite schema may change, and local state may need to be reset between development iterations until a release compatibility policy is locked.
 
 ## Install and Run
@@ -74,7 +81,9 @@ Note:
 - contradiction is intentionally exposed on the default MCP surface as a controlled mutation
 - destructive deletion is still intentionally not exposed on the default MCP surface
 - CLI delete is kept for operator/debug workflows
-- no extra retrieval tool is exposed in v1; `memory-search` remains the narrow, explicit retrieval primitive
+- no extra retrieval tool is exposed in v1; `memory-search` remains the query-based retrieval primitive
+- `memory-search` requires `subject` and uses hybrid retrieval by default
+- `memory-list` is the broad recall path for `scope + kind`
 
 Policy discovery flow:
 
@@ -109,6 +118,7 @@ pnpm start:cli -- get-policy --json
 pnpm start:mcp
 pnpm smoke:init
 pnpm smoke:mcp
+pnpm smoke:semantic
 ```
 
 ## Local Debugging
@@ -126,6 +136,9 @@ Default local files:
 - `~/.hippocampus/hippocampus.db`
 
 If you set `HIPPOCAMPUS_HOME`, those files are created under that directory instead.
+
+Semantic retrieval uses a cached `Xenova/bge-small-en-v1.5` model automatically. Exact search, init, MCP startup, and the rest of the app still work even if semantic retrieval is unavailable.
+For a live provider smoke test, run `pnpm smoke:semantic` after building; it exercises a real Hugging Face model download/load through the provider and uses the local Transformers cache under Hippocampus home.
 
 Inspect the SQLite database directly if needed:
 
@@ -160,7 +173,7 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js search \
   --json
 ```
 
-Kind-only broad recall should still use `memory-search`, for example `scope + kind = preference`, rather than `memory-list`.
+Use `memory-list` for broader recall by class of memory, for example `scope + kind = preference`.
 
 Fields to expect on stored memories:
 
@@ -168,13 +181,21 @@ Fields to expect on stored memories:
 - `kind`: free-form string; prefer stable values like `preference`, `convention`, `workflow`, `project-fact`, or `tooling`
 - `status`: lifecycle state: `candidate`, `active`, `suppressed`, `archived`, or `deleted`
 - `supersededBy`: id of the direct replacement memory when a memory has been contradicted
+- `lastReinforcedAt`: when the memory was last reaffirmed by write-side evidence
+- `retrievalCount`, `lastRetrievedAt`, `strength`: retrieval-side salience signals updated by successful `memory-search` results only
 
 Current retrieval behavior:
 
 - `observed_pattern` memories start as `candidate`
 - `candidate` memories do not appear in normal `memory-search` or `memory-list` results
+- `memory-search` requires `subject` and uses hybrid retrieval by default
+- `memory-search` degrades to exact results if semantic retrieval is unavailable
+- `memory-search` updates retrieval-side salience for returned top-N memories only
+- `memory-list` is the broad recall path for `scope + kind`
+- `memory-list`, `memory-get`, and `memory-get-history` stay retrieval-neutral
+- retrieval `strength` decays over time from `lastRetrievedAt` and is used only as a search tie-break, not as evidence
 - a `candidate` memory promotes to `active` after enough reinforcement
-- stale `candidate` and `active` memories may be archived automatically before normal retrieval
+- stale `candidate` and `active` memories may be archived automatically based on `lastReinforcedAt`
 - archived memories stay inspectable through `memory-get` and `memory-get-history`
 - archived memories are not resurrected by normal reinforcement; a new matching observation creates a new memory
 
@@ -200,18 +221,20 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-
 
 ## Current Limitations
 
-- no semantic retrieval or embeddings
-- no broader semantic query helper beyond exact scoped retrieval
+- first semantic use may need network access to populate the local model cache
+- degraded exact fallback means semantic retrieval problems are non-fatal but still need to be noticed by callers
 - no resurrection workflow for archived memories
 - no bulk reset or hard purge command
 - no published Homebrew formula yet
 
 ## Next
 
-The next active area is semantic retrieval on top of the explicit lifecycle state model.
+The next active area is memory linking on top of the explicit lifecycle state model.
 
-- Keep `memory-search` as the default retrieval primitive unless a future pass intentionally changes matching behavior.
-- Add semantic search deliberately without weakening explicit lifecycle transitions or reviving archived memories implicitly.
+- Keep `memory-search` query-based and `memory-list` as the broad recall surface unless a future pass intentionally changes that split.
+- Add memory linking without weakening explicit lifecycle transitions or reviving archived memories implicitly.
+- Memory linking is the next step after semantic retrieval, not part of the current feature set.
+- A future cloud/service version may choose a larger embedding model, but that decision is out of scope here.
 
 ## First Release Checklist
 

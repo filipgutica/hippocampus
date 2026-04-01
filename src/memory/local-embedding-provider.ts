@@ -8,6 +8,7 @@ type FeatureExtractor = Awaited<ReturnType<TransformersModule['pipeline']>>
 
 const MODEL_SOURCE = 'https://huggingface.co/Xenova/bge-small-en-v1.5'
 const MODEL_ID = 'Xenova/bge-small-en-v1.5'
+const MODEL_DEVICES: Array<'webgpu' | 'cpu'> = ['webgpu', 'cpu']
 
 const listCachedModelFiles = (rootPath: string): string[] => {
   if (!fs.existsSync(rootPath)) {
@@ -128,9 +129,23 @@ export class LocalEmbeddingProvider {
       const transformers = await loadTransformersModule()
       transformers.env.cacheDir = this.cacheDir
       transformers.env.allowRemoteModels = true
-      this.extractor = await transformers.pipeline('feature-extraction', MODEL_ID, {
-        cache_dir: this.cacheDir,
-      })
+
+      let lastError: unknown = null
+      for (const device of MODEL_DEVICES) {
+        try {
+          this.extractor = await transformers.pipeline('feature-extraction', MODEL_ID, {
+            cache_dir: this.cacheDir,
+            device,
+          })
+          break
+        } catch (error) {
+          lastError = error
+        }
+      }
+
+      if (!this.extractor) {
+        throw lastError ?? new Error('Unknown semantic model loading error.')
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error'
       throw new AppError(

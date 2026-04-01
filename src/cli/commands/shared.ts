@@ -100,7 +100,6 @@ const formatMemory = (memory: MemoryRecord): string =>
     `statement: ${memory.statement}`,
     `details: ${memory.details ?? '-'}`,
     `sourceType: ${memory.sourceType}`,
-    `confidence: ${memory.confidence}`,
     `reinforcementCount: ${memory.reinforcementCount}`,
     `policyVersion: ${memory.policyVersion}`,
     `status: ${memory.status}`,

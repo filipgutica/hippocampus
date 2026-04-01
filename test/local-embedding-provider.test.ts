@@ -58,9 +58,36 @@ describe('LocalEmbeddingProvider', () => {
     expect(mocks.pipeline).toHaveBeenCalledWith(
       'feature-extraction',
       'Xenova/bge-small-en-v1.5',
-      expect.objectContaining({ cache_dir: cacheDir }),
+      expect.objectContaining({ cache_dir: cacheDir, device: 'webgpu' }),
     )
     expect(mocks.extractor).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to cpu when webgpu loading fails', async () => {
+    const { LocalEmbeddingProvider } = await import('../src/memory/local-embedding-provider.js')
+    const cacheDir = createTempDir()
+    const provider = new LocalEmbeddingProvider({ cacheDir })
+
+    mocks.pipeline.mockImplementationOnce(async () => {
+      throw new Error('webgpu unavailable')
+    })
+    mocks.pipeline.mockImplementationOnce(async () => mocks.extractor)
+
+    await expect(provider.embed('prefer pnpm')).resolves.toEqual([1, 0, 0])
+
+    expect(mocks.pipeline).toHaveBeenNthCalledWith(
+      1,
+      'feature-extraction',
+      'Xenova/bge-small-en-v1.5',
+      expect.objectContaining({ cache_dir: cacheDir, device: 'webgpu' }),
+    )
+    expect(mocks.pipeline).toHaveBeenNthCalledWith(
+      2,
+      'feature-extraction',
+      'Xenova/bge-small-en-v1.5',
+      expect.objectContaining({ cache_dir: cacheDir, device: 'cpu' }),
+    )
+    expect(mocks.extractor).toHaveBeenCalledTimes(1)
   })
 
   it('accepts typed-array tensor data from the extractor output', async () => {

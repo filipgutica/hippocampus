@@ -45,8 +45,8 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 
 ## Reinforcement and promotion
 - Exact matching only treats `candidate` and `active` memories as live.
-- Reinforcement increments both `reinforcementCount` and `confidence`.
-- Both counters are capped at `5`.
+- Reinforcement increments `reinforcementCount`.
+- `reinforcementCount` is capped at `5`.
 - A `candidate` memory promotes to `active` at `reinforcementCount >= 3`.
 - A stronger later `sourceType` can replace weaker provenance on reinforcement.
 - `lastReinforcedAt` tracks write-side reaffirmation only; it is distinct from retrieval activity.

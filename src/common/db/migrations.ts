@@ -159,6 +159,69 @@ export const migrations: Migration[] = [
         WHERE status IN ('candidate', 'active');
     `,
   },
+  {
+    version: 9,
+    name: 'memory_drop_confidence_copy_table',
+    up: `
+      PRAGMA foreign_keys = OFF;
+
+      CREATE TABLE memories_new (
+        id TEXT PRIMARY KEY,
+        scope_type TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        subject_key TEXT NOT NULL,
+        statement TEXT NOT NULL,
+        details TEXT,
+        source_type TEXT NOT NULL DEFAULT 'explicit_user_statement',
+        reinforcement_count INTEGER NOT NULL,
+        policy_version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_observed_at TEXT NOT NULL,
+        last_reinforced_at TEXT NOT NULL DEFAULT '',
+        retrieval_count INTEGER NOT NULL DEFAULT 0,
+        last_retrieved_at TEXT,
+        strength REAL NOT NULL DEFAULT 1.0,
+        status TEXT NOT NULL DEFAULT 'active',
+        superseded_by TEXT REFERENCES memories(id),
+        deleted_at TEXT
+      );
+
+      INSERT INTO memories_new (
+        id, scope_type, scope_id, kind, subject, subject_key, statement, details,
+        source_type, reinforcement_count, policy_version, created_at, updated_at,
+        last_observed_at, last_reinforced_at, retrieval_count, last_retrieved_at, strength,
+        status, superseded_by, deleted_at
+      )
+      SELECT
+        id, scope_type, scope_id, kind, subject, subject_key, statement, details,
+        source_type, reinforcement_count, policy_version, created_at, updated_at,
+        last_observed_at, last_reinforced_at, retrieval_count, last_retrieved_at, strength,
+        status, superseded_by, deleted_at
+      FROM memories;
+
+      DROP TABLE memories;
+      ALTER TABLE memories_new RENAME TO memories;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_scope_kind_subject
+        ON memories(scope_type, scope_id, kind, subject_key)
+        WHERE status IN ('candidate', 'active');
+
+      CREATE INDEX IF NOT EXISTS idx_memories_status_scope_kind
+        ON memories(status, scope_type, scope_id, kind);
+
+      CREATE INDEX IF NOT EXISTS idx_memories_superseded_by
+        ON memories(superseded_by);
+
+      CREATE INDEX IF NOT EXISTS idx_memories_live_last_reinforced_created
+        ON memories(status, last_reinforced_at, created_at)
+        WHERE status IN ('candidate', 'active');
+
+      PRAGMA foreign_keys = ON;
+    `,
+  },
 ]
 
 export const runMigrations = (db: InstanceType<typeof Database>): void => {

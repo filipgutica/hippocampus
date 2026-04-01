@@ -52,7 +52,7 @@ const sourceTypeStrength: Record<MemorySourceType, number> = {
   explicit_user_statement: 3,
 }
 
-export const MEMORY_POLICY_VERSION = '3'
+export const MEMORY_POLICY_VERSION = '4'
 export const REINFORCEMENT_CAP = 5
 export const CANDIDATE_PROMOTION_THRESHOLD = 3
 export const ACTIVE_ARCHIVE_STALE_AFTER_DAYS = 90

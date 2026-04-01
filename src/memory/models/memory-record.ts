@@ -11,7 +11,6 @@ export type MemoryRecord = {
   statement: string
   details: string | null
   sourceType: MemorySourceType
-  confidence: number
   reinforcementCount: number
   policyVersion: string
   createdAt: string

@@ -35,6 +35,7 @@ describe('database migrations', () => {
     expect(indexes.some(index => index.name === 'idx_memories_live_scope_kind_subject')).toBe(true)
     expect(indexes.some(index => index.name === 'idx_memories_status_scope_kind')).toBe(true)
     expect(indexes.some(index => index.name === 'idx_memories_superseded_by')).toBe(true)
+    expect(tableInfo.some(column => column.name === 'confidence')).toBe(false)
     expect(tableInfo.some(column => column.name === 'last_reinforced_at')).toBe(true)
     expect(tableInfo.some(column => column.name === 'retrieval_count')).toBe(true)
     expect(tableInfo.some(column => column.name === 'last_retrieved_at')).toBe(true)
@@ -51,8 +52,8 @@ describe('database migrations', () => {
       .prepare(
         [
           'INSERT INTO memories (',
-          'id, scope_type, scope_id, kind, subject, subject_key, statement, details, source_type, confidence, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at, retrieval_count, last_retrieved_at, strength, status, superseded_by, deleted_at',
-          ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'id, scope_type, scope_id, kind, subject, subject_key, statement, details, source_type, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at, retrieval_count, last_retrieved_at, strength, status, superseded_by, deleted_at',
+          ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         ].join(' '),
       )
       .run(
@@ -65,7 +66,6 @@ describe('database migrations', () => {
         'Use pnpm for this repo.',
         null,
         'explicit_user_statement',
-        1,
         1,
         '3',
         '2026-01-01T00:00:00.000Z',

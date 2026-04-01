@@ -610,7 +610,6 @@ export class MemoryService {
         statement,
         details: input.details?.trim() ?? null,
         sourceType: pickStrongerSourceType(existing.sourceType, sourceType),
-        confidence: capReinforcementValue(existing.confidence + 1),
         reinforcementCount: capReinforcementValue(existing.reinforcementCount + 1),
         status: resolveReinforcedStatus({
           currentStatus: existing.status,

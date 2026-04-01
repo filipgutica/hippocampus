@@ -314,7 +314,6 @@ describe('MemoryService', () => {
     ).toThrow(`Memory already superseded: ${contradicted.contradictedMemory.id}`)
     expect(capped.status).toBe('active')
     expect(capped.reinforcementCount).toBe(5)
-    expect(capped.confidence).toBe(5)
 
     db.close()
   })
@@ -935,9 +934,7 @@ describe('MemoryService', () => {
     ].sort())
     expect(activeInspect.status).toBe('archived')
     expect(candidateInspect.status).toBe('archived')
-    expect(activeInspect.confidence).toBe(active.memory.confidence)
     expect(activeInspect.reinforcementCount).toBe(active.memory.reinforcementCount)
-    expect(candidateInspect.confidence).toBe(candidate.memory.confidence)
     expect(candidateInspect.reinforcementCount).toBe(candidate.memory.reinforcementCount)
     expect(supersededInspect.status).toBe('suppressed')
     expect(deletedInspect.status).toBe('deleted')

@@ -14,7 +14,6 @@ type MemoryRow = {
   statement: string
   details: string | null
   source_type: MemorySourceType
-  confidence: number
   reinforcement_count: number
   policy_version: string
   created_at: string
@@ -38,7 +37,6 @@ const toRecord = (row: MemoryRow): MemoryRecord => ({
   statement: row.statement,
   details: row.details,
   sourceType: row.source_type,
-  confidence: row.confidence,
   reinforcementCount: row.reinforcement_count,
   policyVersion: row.policy_version,
   createdAt: row.created_at,
@@ -85,7 +83,6 @@ export class MemoryRepository {
     sourceType: MemorySourceType
     status: MemoryStatus
     policyVersion: string
-    confidence?: number
     reinforcementCount?: number
     retrievalCount?: number
     lastRetrievedAt?: string | null
@@ -94,7 +91,6 @@ export class MemoryRepository {
     now: string
   }): MemoryRecord {
     const id = input.id ?? randomUUID()
-    const confidence = input.confidence ?? 1
     const reinforcementCount = input.reinforcementCount ?? 1
     const retrievalCount = input.retrievalCount ?? 0
     const lastRetrievedAt = input.lastRetrievedAt ?? null
@@ -105,9 +101,9 @@ export class MemoryRepository {
         `
           INSERT INTO memories (
             id, scope_type, scope_id, kind, subject, subject_key, statement, details,
-            source_type, confidence, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at,
+            source_type, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at,
             retrieval_count, last_retrieved_at, strength, status, superseded_by, deleted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -120,7 +116,6 @@ export class MemoryRepository {
         input.statement,
         input.details ?? null,
         input.sourceType,
-        confidence,
         reinforcementCount,
         input.policyVersion,
         input.now,
@@ -144,7 +139,6 @@ export class MemoryRepository {
       statement: input.statement,
       details: input.details ?? null,
       sourceType: input.sourceType,
-      confidence,
       reinforcementCount,
       policyVersion: input.policyVersion,
       createdAt: input.now,
@@ -165,7 +159,6 @@ export class MemoryRepository {
     details?: string | null
     sourceType: MemorySourceType
     status: MemoryStatus
-    confidence: number
     reinforcementCount: number
     policyVersion: string
     now: string
@@ -175,7 +168,6 @@ export class MemoryRepository {
       statement: input.statement,
       details: input.details ?? input.memory.details,
       sourceType: input.sourceType,
-      confidence: input.confidence,
       reinforcementCount: input.reinforcementCount,
       policyVersion: input.policyVersion,
       updatedAt: input.now,
@@ -189,7 +181,7 @@ export class MemoryRepository {
       .prepare(
         `
           UPDATE memories
-          SET statement = ?, details = ?, source_type = ?, confidence = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, last_reinforced_at = ?, status = ?, superseded_by = NULL, deleted_at = NULL
+          SET statement = ?, details = ?, source_type = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, last_reinforced_at = ?, status = ?, superseded_by = NULL, deleted_at = NULL
           WHERE id = ?
         `,
       )
@@ -197,7 +189,6 @@ export class MemoryRepository {
         next.statement,
         next.details,
         next.sourceType,
-        next.confidence,
         next.reinforcementCount,
         next.policyVersion,
         next.updatedAt,
@@ -229,7 +220,7 @@ export class MemoryRepository {
     }
 
     const rows = this.db
-      .prepare(`SELECT * FROM memories WHERE ${clauses.join(' AND ')} ORDER BY confidence DESC, last_reinforced_at DESC, reinforcement_count DESC, subject ASC`)
+      .prepare(`SELECT * FROM memories WHERE ${clauses.join(' AND ')}`)
       .all(...params) as MemoryRow[]
 
     return rows.map(toRecord)
@@ -255,7 +246,7 @@ export class MemoryRepository {
 
     const rows = this.db
       .prepare(
-        `SELECT * FROM memories WHERE ${clauses.join(' AND ')} ORDER BY confidence DESC, last_reinforced_at DESC, reinforcement_count DESC, subject ASC${limitClause}`,
+        `SELECT * FROM memories WHERE ${clauses.join(' AND ')}${limitClause}`,
       )
       .all(...params) as MemoryRow[]
 

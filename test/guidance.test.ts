@@ -13,10 +13,10 @@ describe('guidance artifacts', () => {
 
     expect(guidance).toContain('# Hippocampus Runtime Memory Policy')
     expect(guidance).toContain('Use this policy first when deciding whether to retrieve or save memory through Hippocampus.')
-    expect(guidance).toContain('Use `memory-list` for broader recall with `scope + kind`')
-    expect(guidance).toContain('## Recommended kinds')
+    expect(guidance).toContain('Use `memory-list` for broader recall with `scope + type`')
+    expect(guidance).toContain('## Memory Types')
     expect(guidance).toContain('canonical absolute path to the repo root')
-    expect(guidance).toContain('## Source Types')
+    expect(guidance).toContain('## Origin')
     expect(guidance).toContain('## Status')
     expect(guidance).toContain('## Contradiction and supersession')
     expect(runtimeMemoryPolicyResource.artifact).toBe('skills/memory-runtime-policy-skill.md')

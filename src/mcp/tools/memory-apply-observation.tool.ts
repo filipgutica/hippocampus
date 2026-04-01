@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { MEMORY_ORIGINS, MEMORY_TYPES } from '../../memory/types/memory.types.js'
 import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemoryApplyObservationTool = (server: McpServer, memoryService: MemoryService): void => {
@@ -20,10 +21,10 @@ export const registerMemoryApplyObservationTool = (server: McpServer, memoryServ
       `),
       inputSchema: {
         scope: mcpScopeSchema,
-        kind: z.string().min(1),
+        type: z.enum(MEMORY_TYPES),
         subject: z.string().min(1),
         statement: z.string().min(1),
-        sourceType: z.enum(['explicit_user_statement', 'observed_pattern', 'tool_observation']),
+        origin: z.enum(MEMORY_ORIGINS),
         details: z.string().optional(),
         source: z
           .object({
@@ -37,10 +38,10 @@ export const registerMemoryApplyObservationTool = (server: McpServer, memoryServ
     async input => {
       const result = memoryService.applyObservation({
         scope: input.scope,
-        kind: input.kind,
+        type: input.type,
         subject: input.subject,
         statement: input.statement,
-        sourceType: input.sourceType,
+        origin: input.origin,
         details: input.details ?? null,
         source: input.source ?? null,
       })

@@ -7,7 +7,7 @@ const norm = (value: string | null | undefined): string | null => {
 }
 
 export const getSemanticSourceText = (memory: MemoryRecord): string =>
-  [norm(memory.kind), norm(memory.subject), norm(memory.statement), norm(memory.details)].filter(Boolean).join('\n')
+  [norm(memory.type), norm(memory.subject), norm(memory.statement), norm(memory.details)].filter(Boolean).join('\n')
 
 export const getSourceTextHash = (value: string): string => createHash('sha256').update(value).digest('hex')
 

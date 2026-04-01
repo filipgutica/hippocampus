@@ -22,8 +22,9 @@ import {
   evaluateMemoryPolicy,
   getInitialMemoryStatus,
   getEffectiveRetrievalStrength,
-  memorySourceTypeDefinitions,
-  pickStrongerSourceType,
+  memoryOriginDefinitions,
+  memoryTypeDefinitions,
+  pickStrongerOrigin,
   resolveReinforcedStatus,
 } from './memory.policy.js'
 import { compareMemoryRank, rankMemories } from './memory-ranking.policy.js'
@@ -42,7 +43,7 @@ import type {
   SearchResult,
 } from './models/memory-result.js'
 import type { MemoryRecord, ParsedMemoryEventRecord } from './models/memory-record.js'
-import type { MemorySourceType } from './types/memory.types.js'
+import type { MemoryOrigin, MemoryType } from './types/memory.types.js'
 import type Database from 'better-sqlite3'
 import {
   runtimeMemoryPolicyResource,
@@ -94,14 +95,25 @@ const ensureNonEmpty = (value: string, code: string, message: string): string =>
   return trimmed
 }
 
-const ensureSourceType = (value: string): MemorySourceType => {
-  if (memorySourceTypeDefinitions.some(definition => definition.value === value)) {
-    return value as MemorySourceType
+const ensureMemoryType = (value: string): MemoryType => {
+  if (memoryTypeDefinitions.some(definition => definition.value === value)) {
+    return value as MemoryType
   }
 
   throw new AppError(
-    'INVALID_SOURCE_TYPE',
-    'sourceType must be one of explicit_user_statement, observed_pattern, or tool_observation.',
+    'INVALID_TYPE',
+    'type must be one of procedural, episodic, semantic, preference, or decision.',
+  )
+}
+
+const ensureMemoryOrigin = (value: string): MemoryOrigin => {
+  if (memoryOriginDefinitions.some(definition => definition.value === value)) {
+    return value as MemoryOrigin
+  }
+
+  throw new AppError(
+    'INVALID_ORIGIN',
+    'origin must be one of explicit_user_statement, observed_pattern, or tool_observation.',
   )
 }
 
@@ -173,7 +185,7 @@ const toParsedEvent = (event: {
   memoryId: string | null
   eventType: string
   scope: { type: 'user' | 'repo' | 'org'; id: string }
-  kind: string
+  type: MemoryType
   subjectKey: string
   observationJson: string
   sourceJson: string | null
@@ -184,7 +196,7 @@ const toParsedEvent = (event: {
   memoryId: event.memoryId,
   eventType: event.eventType as ParsedMemoryEventRecord['eventType'],
   scope: event.scope,
-  kind: event.kind,
+  type: event.type,
   subjectKey: event.subjectKey,
   observation: parseStoredJson(event.observationJson),
   source: parseStoredJson(event.sourceJson),
@@ -397,7 +409,7 @@ export class MemoryService {
           memoryId: archivedMemory.id,
           eventType: 'archived',
           scope: archivedMemory.scope,
-          kind: archivedMemory.kind,
+          type: archivedMemory.type,
           subjectKey: archivedMemory.subjectKey,
           observation: null,
           source: input.source ?? null,
@@ -452,13 +464,13 @@ export class MemoryService {
 
   private async searchBySemanticSimilarity(input: {
     scope: ScopeRef
-    kind: string | null
+    type: MemoryType | null
     queryEmbedding: number[]
     now: string
   }): Promise<MemoryRecord[]> {
     const candidates = this.deps.memoryRepository.list({
       scope: input.scope,
-      kind: input.kind,
+      type: input.type,
       limit: null,
     })
 
@@ -488,14 +500,14 @@ export class MemoryService {
 
   private getExactSearchItems(input: {
     scope: ScopeRef
-    kind: string | null
+    type: MemoryType | null
     subject: string
     now: string
   }): MemoryRecord[] {
     return this.deps.memoryRepository
       .search({
         scope: input.scope,
-        kind: input.kind,
+        type: input.type,
         subject: input.subject,
       })
       .sort((left, right) =>
@@ -534,16 +546,16 @@ export class MemoryService {
 
   applyObservation(input: ApplyObservationInput): ApplyMemoryResult {
     const scope = canonicalizeScope(validateScope(input.scope))
-    const kind = ensureNonEmpty(input.kind, 'INVALID_KIND', 'Observation kind must not be empty.')
+    const type = ensureMemoryType(ensureNonEmpty(input.type, 'INVALID_TYPE', 'Observation type must not be empty.'))
     const statement = ensureNonEmpty(input.statement, 'INVALID_STATEMENT', 'Observation statement must not be empty.')
-    const sourceType = ensureSourceType(input.sourceType)
+    const origin = ensureMemoryOrigin(input.origin)
     const subjectKey = normalizeSubject(input.subject)
 
     this.maybeArchiveStaleMemories()
 
     const now = new Date().toISOString()
 
-    const existing = subjectKey ? this.deps.memoryRepository.findSimilar(scope, kind, subjectKey) : null
+    const existing = subjectKey ? this.deps.memoryRepository.findSimilar(scope, type, subjectKey) : null
     const decision = evaluateMemoryPolicy({
       policyVersion: this.deps.policyVersion,
       subjectKey,
@@ -555,7 +567,7 @@ export class MemoryService {
         this.deps.memoryEventRepository.insert({
           eventType: 'rejected',
           scope,
-          kind,
+          type,
           subjectKey,
           observation: input,
           source: input.source ?? null,
@@ -567,15 +579,15 @@ export class MemoryService {
       }
 
       if (decision.decision === 'create') {
-        const status = getInitialMemoryStatus(input.sourceType)
+        const status = getInitialMemoryStatus(origin)
         const memory = this.deps.memoryRepository.insert({
           scope,
-          kind,
+          type,
           subject: input.subject.trim(),
           subjectKey,
           statement,
           details: input.details?.trim() ?? null,
-          sourceType,
+          origin,
           status,
           policyVersion: this.deps.policyVersion,
           now,
@@ -585,7 +597,7 @@ export class MemoryService {
           memoryId: memory.id,
           eventType: 'created',
           scope,
-          kind: memory.kind,
+          type: memory.type,
           subjectKey,
           observation: input,
           source: input.source ?? null,
@@ -609,12 +621,12 @@ export class MemoryService {
         memory: existing,
         statement,
         details: input.details?.trim() ?? null,
-        sourceType: pickStrongerSourceType(existing.sourceType, sourceType),
+        origin: pickStrongerOrigin(existing.origin, origin),
         reinforcementCount: capReinforcementValue(existing.reinforcementCount + 1),
         status: resolveReinforcedStatus({
           currentStatus: existing.status,
           nextReinforcementCount: capReinforcementValue(existing.reinforcementCount + 1),
-          nextSourceType: pickStrongerSourceType(existing.sourceType, sourceType),
+          nextOrigin: pickStrongerOrigin(existing.origin, origin),
         }),
         policyVersion: this.deps.policyVersion,
         now,
@@ -624,7 +636,7 @@ export class MemoryService {
         memoryId: memory.id,
         eventType: 'reinforced',
         scope,
-        kind: memory.kind,
+        type: memory.type,
         subjectKey,
         observation: input,
         source: input.source ?? null,
@@ -645,7 +657,7 @@ export class MemoryService {
     const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
     const requestedMatchMode = toMatchMode(input.matchMode)
-    const kind = input.kind?.trim() || null
+    const type = input.type == null ? null : ensureMemoryType(input.type)
     const semanticQuery = ensureNonEmpty(input.subject, 'INVALID_SEARCH_SUBJECT', 'subject must not be empty for memory-search.')
     const subject = normalizeSubject(semanticQuery)
     const now = new Date().toISOString()
@@ -655,7 +667,7 @@ export class MemoryService {
 
       const exactItems = this.getExactSearchItems({
         scope,
-        kind,
+        type,
         subject,
         now,
       })
@@ -684,7 +696,7 @@ export class MemoryService {
 
       const exactItems = this.getExactSearchItems({
         scope,
-        kind,
+        type,
         subject,
         now,
       })
@@ -705,13 +717,13 @@ export class MemoryService {
 
     const exactItems = this.getExactSearchItems({
       scope,
-      kind,
+      type,
       subject,
       now,
     })
     const semanticItems = await this.searchBySemanticSimilarity({
       scope,
-      kind,
+      type,
       queryEmbedding,
       now,
     })
@@ -737,7 +749,7 @@ export class MemoryService {
     const items = rankMemories(
       this.deps.memoryRepository.list({
         scope,
-        kind: input.kind?.trim() || null,
+        type: input.type == null ? null : ensureMemoryType(input.type),
         limit: null,
       }),
     )
@@ -794,7 +806,7 @@ export class MemoryService {
         memoryId: deletedMemory.id,
         eventType: 'deleted',
         scope: deletedMemory.scope,
-        kind: deletedMemory.kind,
+        type: deletedMemory.type,
         subjectKey: deletedMemory.subjectKey,
         observation: null,
         source: input.source ?? null,
@@ -822,21 +834,16 @@ export class MemoryService {
       throw new AppError('INVALID_REPLACEMENT_SCOPE', 'Replacement memory must keep the same scope as the contradicted memory.')
     }
 
-    const replacementKind = ensureNonEmpty(
-      input.replacement.kind,
-      'INVALID_KIND',
-      'Replacement kind must not be empty.',
+    const replacementType = ensureMemoryType(
+      ensureNonEmpty(input.replacement.type, 'INVALID_TYPE', 'Replacement type must not be empty.'),
     )
-    if (replacementKind !== memory.kind) {
-      throw new AppError('INVALID_REPLACEMENT_KIND', 'Replacement memory must keep the same kind as the contradicted memory.')
-    }
 
     const replacementStatement = ensureNonEmpty(
       input.replacement.statement,
       'INVALID_STATEMENT',
       'Replacement statement must not be empty.',
     )
-    const replacementSourceType = ensureSourceType(input.replacement.sourceType)
+    const replacementOrigin = ensureMemoryOrigin(input.replacement.origin)
     const replacementSubjectKey = normalizeSubject(input.replacement.subject)
     if (!replacementSubjectKey) {
       throw new AppError('INVALID_SUBJECT', 'Replacement subject is empty after normalization.')
@@ -849,7 +856,7 @@ export class MemoryService {
     const now = new Date().toISOString()
 
     const existing = replacementSubjectKey
-      ? this.deps.memoryRepository.findSimilar(replacementScope, replacementKind, replacementSubjectKey)
+      ? this.deps.memoryRepository.findSimilar(replacementScope, replacementType, replacementSubjectKey)
       : null
     if (existing && existing.id !== currentMemory.id) {
       throw new AppError(
@@ -868,12 +875,12 @@ export class MemoryService {
       const replacementMemory = this.deps.memoryRepository.insert({
         id: replacementMemoryId,
         scope: replacementScope,
-        kind: replacementKind,
+        type: replacementType,
         subject: input.replacement.subject.trim(),
         subjectKey: replacementSubjectKey,
         statement: replacementStatement,
         details: input.replacement.details?.trim() ?? null,
-        sourceType: replacementSourceType,
+        origin: replacementOrigin,
         status: 'active',
         policyVersion: this.deps.policyVersion,
         now,
@@ -889,7 +896,7 @@ export class MemoryService {
         memoryId: contradictedMemory.id,
         eventType: 'contradicted',
         scope: contradictedMemory.scope,
-        kind: contradictedMemory.kind,
+        type: contradictedMemory.type,
         subjectKey: contradictedMemory.subjectKey,
         observation: {
           ...input.replacement,
@@ -907,7 +914,7 @@ export class MemoryService {
         memoryId: replacementMemory.id,
         eventType: 'created',
         scope: replacementMemory.scope,
-        kind: replacementMemory.kind,
+        type: replacementMemory.type,
         subjectKey: replacementMemory.subjectKey,
         observation: {
           ...input.replacement,

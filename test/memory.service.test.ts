@@ -118,26 +118,26 @@ describe('MemoryService', () => {
 
     const first = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: ' Prefer pnpm ',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'observed_pattern',
+      origin: 'observed_pattern',
       source: { channel: 'cli' },
     })
     const second = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'observed_pattern',
+      origin: 'observed_pattern',
       source: { channel: 'cli' },
     })
     const third = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const search = await service.searchMemories({
@@ -159,10 +159,10 @@ describe('MemoryService', () => {
       id: memory.id,
       replacement: {
         scope,
-        kind: 'preference',
+        type: 'preference',
         subject: 'Prefer npm',
         statement: 'Use npm for this repo.',
-        sourceType: 'explicit_user_statement',
+        origin: 'explicit_user_statement',
         details: null,
       },
       source: { channel: 'cli' },
@@ -206,7 +206,7 @@ describe('MemoryService', () => {
     expect(search.total).toBe(1)
     expect(search.items[0]?.reinforcementCount).toBe(3)
     expect(search.items[0]?.status).toBe('active')
-    expect(search.items[0]?.sourceType).toBe('explicit_user_statement')
+    expect(search.items[0]?.origin).toBe('explicit_user_statement')
     expect(list.total).toBe(1)
     expect(memory.status).toBe('active')
     expect(memory.supersededByMemory).toBeNull()
@@ -237,18 +237,18 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before commit',
       statement: 'Run tests before commit.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const candidate = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer brief plans',
       statement: 'Prefer brief plans.',
-      sourceType: 'observed_pattern',
+      origin: 'observed_pattern',
       source: { channel: 'cli' },
     })
 
@@ -267,10 +267,10 @@ describe('MemoryService', () => {
       id: candidate.memory.id,
       replacement: {
         scope,
-        kind: 'preference',
+        type: 'preference',
         subject: 'prefer short plans',
         statement: 'Prefer short plans.',
-        sourceType: 'explicit_user_statement',
+        origin: 'explicit_user_statement',
         details: null,
       },
       source: { channel: 'cli' },
@@ -280,10 +280,10 @@ describe('MemoryService', () => {
     for (let index = 0; index < 10; index += 1) {
       const result = service.applyObservation({
         scope,
-        kind: 'workflow',
+        type: 'procedural',
         subject: 'run tests before commit',
         statement: 'Run tests before commit.',
-        sourceType: 'explicit_user_statement',
+        origin: 'explicit_user_statement',
         source: { channel: 'cli' },
       })
 
@@ -303,10 +303,10 @@ describe('MemoryService', () => {
         id: contradicted.contradictedMemory.id,
         replacement: {
           scope,
-          kind: 'preference',
+          type: 'preference',
           subject: 'prefer direct answers',
           statement: 'Prefer direct answers.',
-          sourceType: 'explicit_user_statement',
+          origin: 'explicit_user_statement',
           details: null,
         },
         source: { channel: 'cli' },
@@ -326,10 +326,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -361,10 +361,10 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-03T00:00:00.000Z'))
     service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm and keep the lockfile committed.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -381,10 +381,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before commit',
       statement: 'Run tests before commit.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -412,18 +412,18 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const first = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const second = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer npm',
       statement: 'Use npm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -480,18 +480,18 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const pnpm = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const npm = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer npm',
       statement: 'Use npm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -549,18 +549,18 @@ describe('MemoryService', () => {
 
     service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer npm',
       statement: 'Use npm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -582,10 +582,10 @@ describe('MemoryService', () => {
 
     service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm and keep the lockfile committed.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -626,10 +626,10 @@ describe('MemoryService', () => {
 
     service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -675,10 +675,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -733,10 +733,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before commit',
       statement: 'Run tests before commit.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -778,10 +778,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -828,34 +828,34 @@ describe('MemoryService', () => {
 
     const active = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before commit',
       statement: 'Run tests before commit.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const candidate = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer short plans',
       statement: 'Prefer short plans.',
-      sourceType: 'observed_pattern',
+      origin: 'observed_pattern',
       source: { channel: 'cli' },
     })
     const superseded = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const deleted = service.applyObservation({
       scope,
-      kind: 'tooling',
+      type: 'procedural',
       subject: 'prefer eslint',
       statement: 'Use eslint for linting.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -876,10 +876,10 @@ describe('MemoryService', () => {
       id: superseded.memory.id,
       replacement: {
         scope,
-        kind: superseded.memory.kind,
+        type: 'semantic',
         subject: 'prefer npm',
         statement: 'Use npm for this repo.',
-        sourceType: 'explicit_user_statement',
+        origin: 'explicit_user_statement',
         details: null,
       },
       source: { channel: 'cli' },
@@ -897,6 +897,8 @@ describe('MemoryService', () => {
     })
 
     expect(dryRun.total).toBe(3)
+    expect(contradicted.replacementMemory.type).toBe('semantic')
+    expect(contradicted.contradictedMemory.type).toBe('preference')
     expect(dryRun.items.map(item => item.id).sort()).toEqual([
       active.memory.id,
       contradicted.replacementMemory.id,
@@ -955,10 +957,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -992,10 +994,10 @@ describe('MemoryService', () => {
 
     const recreated = service.applyObservation({
       scope,
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -1007,10 +1009,10 @@ describe('MemoryService', () => {
       id: created.memory.id,
       replacement: {
         scope,
-        kind: 'preference',
+        type: 'preference',
         subject: 'prefer npm',
         statement: 'Use npm for this repo.',
-        sourceType: 'explicit_user_statement',
+        origin: 'explicit_user_statement',
         details: null,
       },
       source: { channel: 'cli' },
@@ -1033,18 +1035,18 @@ describe('MemoryService', () => {
 
     const readOnlyCreated = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'read docs before coding',
       statement: 'Read docs before coding.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const deletedCreated = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before merge',
       statement: 'Run tests before merge.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -1082,10 +1084,10 @@ describe('MemoryService', () => {
 
     const cooldownCreated = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'keep commits focused',
       statement: 'Keep commits focused.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -1132,10 +1134,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'write tests first',
       statement: 'Write tests first.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -1168,10 +1170,10 @@ describe('MemoryService', () => {
     const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
     const created = service.applyObservation({
       scope,
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before release',
       statement: 'Run tests before release.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
@@ -1214,10 +1216,10 @@ describe('MemoryService', () => {
     for (let index = 0; index < 51; index += 1) {
       service.applyObservation({
         scope,
-        kind: 'workflow',
+        type: 'procedural',
         subject: `stale memory ${index}`,
         statement: `Stale memory ${index}.`,
-        sourceType: 'explicit_user_statement',
+        origin: 'explicit_user_statement',
         source: { channel: 'cli' },
       })
     }
@@ -1256,10 +1258,10 @@ describe('MemoryService', () => {
 
     const created = service.applyObservation({
       scope: { type: 'repo', id: `${repoSymlink}${path.sep}` },
-      kind: 'preference',
+      type: 'preference',
       subject: 'prefer pnpm',
       statement: 'Use pnpm for this repo.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const realpathSearch = await service.searchMemories({
@@ -1274,10 +1276,10 @@ describe('MemoryService', () => {
     })
     const missingCreated = service.applyObservation({
       scope: { type: 'repo', id: missingRepoScopeId },
-      kind: 'workflow',
+      type: 'procedural',
       subject: 'run tests before commit',
       statement: 'Run tests before commit.',
-      sourceType: 'explicit_user_statement',
+      origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const missingSearch = await service.searchMemories({

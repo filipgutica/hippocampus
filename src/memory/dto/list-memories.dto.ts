@@ -1,7 +1,8 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
+import type { MemoryType } from '../types/memory.types.js'
 
 export type ListMemoriesInput = {
   scope: ScopeRef
-  kind?: string | null
+  type?: MemoryType | null
   limit?: number | null
 }

@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
+import { MEMORY_ORIGINS, MEMORY_TYPES } from '../../memory/types/memory.types.js'
 import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemoryContradictTool = (server: McpServer, memoryService: MemoryService): void => {
@@ -12,18 +13,18 @@ export const registerMemoryContradictTool = (server: McpServer, memoryService: M
         Correct a stale or wrong memory by id. First find
         the id with \`memory-search\` or \`memory-list\`, then
         call this tool to suppress the old memory and create
-        a new active replacement in the same scope and kind.
-        The replacement subject may differ from the old
-        subject when the durable topic itself has changed.
+        a new active replacement in the same scope. The
+        replacement may carry a different type when the
+        durable topic itself has changed.
       `),
       inputSchema: {
         id: z.string().min(1),
         replacement: z.object({
           scope: mcpScopeSchema,
-          kind: z.string().min(1),
+          type: z.enum(MEMORY_TYPES),
           subject: z.string().min(1),
           statement: z.string().min(1),
-          sourceType: z.enum(['explicit_user_statement', 'observed_pattern', 'tool_observation']),
+          origin: z.enum(MEMORY_ORIGINS),
           details: z.string().optional(),
         }),
       },
@@ -33,10 +34,10 @@ export const registerMemoryContradictTool = (server: McpServer, memoryService: M
         id: input.id,
         replacement: {
           scope: input.replacement.scope,
-          kind: input.replacement.kind,
+          type: input.replacement.type,
           subject: input.replacement.subject,
           statement: input.replacement.statement,
-          sourceType: input.replacement.sourceType,
+          origin: input.replacement.origin,
           details: input.replacement.details ?? null,
         },
         source: { channel: 'mcp' },

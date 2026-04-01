@@ -171,7 +171,7 @@ describe('MCP guidance resource', () => {
       expect(policyTool?.description).toContain('Start here once per session')
       expect(policyTool?.description).toContain('resource pointers')
       expect(contradictTool?.description).toContain('First find the id with `memory-search` or `memory-list`')
-      expect(contradictTool?.description).toContain('replacement subject may differ')
+      expect(contradictTool?.description).toContain('replacement may carry a different type')
 
       const searchResult = await client.callTool({
         name: 'memory-search',

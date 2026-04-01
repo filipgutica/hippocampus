@@ -1,6 +1,6 @@
 import type { PolicyDefinition } from './dto/get-policy.dto.js'
 import type { ApplyMemoryDecision } from './types/memory.types.js'
-import type { MemorySourceType, MemoryStatus } from './types/memory.types.js'
+import type { MemoryOrigin, MemoryStatus, MemoryType } from './types/memory.types.js'
 
 export type MemoryPolicyContext = {
   policyVersion: string
@@ -8,7 +8,30 @@ export type MemoryPolicyContext = {
   existingMemory: boolean
 }
 
-export const memorySourceTypeDefinitions: PolicyDefinition<MemorySourceType>[] = [
+export const memoryTypeDefinitions: PolicyDefinition<MemoryType>[] = [
+  {
+    value: 'procedural',
+    description: 'A memory for a repeatable action, workflow, or if-then style behavior.',
+  },
+  {
+    value: 'episodic',
+    description: 'A memory for a specific event, incident, or resolved situation.',
+  },
+  {
+    value: 'semantic',
+    description: 'A memory for declarative knowledge, facts, or stable project understanding.',
+  },
+  {
+    value: 'preference',
+    description: 'A memory for a stable user or project preference.',
+  },
+  {
+    value: 'decision',
+    description: 'A memory for a durable choice together with its rationale.',
+  },
+]
+
+export const memoryOriginDefinitions: PolicyDefinition<MemoryOrigin>[] = [
   {
     value: 'explicit_user_statement',
     description: 'A durable fact, preference, or instruction directly stated by the user.',
@@ -46,7 +69,7 @@ export const memoryStatusDefinitions: PolicyDefinition<MemoryStatus>[] = [
   },
 ]
 
-const sourceTypeStrength: Record<MemorySourceType, number> = {
+const originStrength: Record<MemoryOrigin, number> = {
   observed_pattern: 1,
   tool_observation: 2,
   explicit_user_statement: 3,
@@ -65,8 +88,8 @@ export const RETRIEVAL_BOOST_FACTOR = 1.1
 export const RETRIEVAL_STRENGTH_FLOOR = 1.0
 export const RETRIEVAL_STRENGTH_CAP = 5
 
-export const getInitialMemoryStatus = (sourceType: MemorySourceType): MemoryStatus =>
-  sourceType === 'observed_pattern' ? 'candidate' : 'active'
+export const getInitialMemoryStatus = (origin: MemoryOrigin): MemoryStatus =>
+  origin === 'observed_pattern' ? 'candidate' : 'active'
 
 export const isLiveMemoryStatus = (status: MemoryStatus): boolean => status === 'candidate' || status === 'active'
 
@@ -133,25 +156,23 @@ export const applyRetrievalAccess = (
   }
 }
 
-export const pickStrongerSourceType = (
-  current: MemorySourceType,
-  incoming: MemorySourceType,
-): MemorySourceType => (sourceTypeStrength[incoming] > sourceTypeStrength[current] ? incoming : current)
+export const pickStrongerOrigin = (current: MemoryOrigin, incoming: MemoryOrigin): MemoryOrigin =>
+  originStrength[incoming] > originStrength[current] ? incoming : current
 
 export const resolveReinforcedStatus = ({
   currentStatus,
   nextReinforcementCount,
-  nextSourceType,
+  nextOrigin,
 }: {
   currentStatus: MemoryStatus
   nextReinforcementCount: number
-  nextSourceType: MemorySourceType
+  nextOrigin: MemoryOrigin
 }): MemoryStatus => {
   if (currentStatus !== 'candidate') {
     return currentStatus
   }
 
-  if (getInitialMemoryStatus(nextSourceType) === 'active') {
+  if (getInitialMemoryStatus(nextOrigin) === 'active') {
     return 'active'
   }
 

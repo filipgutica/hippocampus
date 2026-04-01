@@ -1,5 +1,5 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
-import type { MemorySourceType } from '../types/memory.types.js'
+import type { MemoryOrigin, MemoryType } from '../types/memory.types.js'
 
 export type ObservationSource = {
   channel: 'cli' | 'mcp'
@@ -9,10 +9,10 @@ export type ObservationSource = {
 
 export type MemoryDraftInput = {
   scope: ScopeRef
-  kind: string
+  type: MemoryType
   subject: string
   statement: string
-  sourceType: MemorySourceType
+  origin: MemoryOrigin
   details?: string | null
 }
 

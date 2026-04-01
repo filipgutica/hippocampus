@@ -39,6 +39,7 @@ Hippocampus is a local-first memory runtime for coding agents. The current syste
 
 - Hippocampus is currently pre-stable and local-only/in development.
 - The on-disk SQLite schema is not yet a supported compatibility contract.
+- WIP note: for the current memory-model rename work, do not add migration or backward-compatibility logic unless release planning changes this. Remove this note when the project starts preserving existing local databases.
 - Until the first public release, migration history may be rewritten or squashed to match the current canonical schema.
 - Before the first release, stop rewriting migration history and switch to additive-only migrations that preserve upgrade paths for existing local databases.
 

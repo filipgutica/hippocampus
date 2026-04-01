@@ -3,13 +3,13 @@ import type Database from 'better-sqlite3'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput, ObservationSource } from './dto/apply-observation.dto.js'
 import type { MemoryEventRecord } from './models/memory-record.js'
-import type { MemoryEventType } from './types/memory.types.js'
+import type { MemoryEventType, MemoryType } from './types/memory.types.js'
 
 type EventInsertInput = {
   memoryId?: string | null
   eventType: MemoryEventType
   scope: ScopeRef
-  kind: string
+  type: MemoryType
   subjectKey: string
   observation?: ApplyObservationInput | null
   source?: ObservationSource | null
@@ -23,7 +23,7 @@ type EventRow = {
   event_type: MemoryEventType
   scope_type: ScopeRef['type']
   scope_id: string
-  kind: string
+  memory_type: MemoryType
   subject_key: string
   observation_json: string
   source_json: string | null
@@ -39,7 +39,7 @@ const toRecord = (row: EventRow): MemoryEventRecord => ({
     type: row.scope_type,
     id: row.scope_id,
   },
-  kind: row.kind,
+  type: row.memory_type,
   subjectKey: row.subject_key,
   observationJson: row.observation_json,
   sourceJson: row.source_json,
@@ -63,7 +63,7 @@ export class MemoryEventRepository {
       .prepare(
         `
           INSERT INTO memory_events (
-            id, memory_id, event_type, scope_type, scope_id, kind, subject_key,
+            id, memory_id, event_type, scope_type, scope_id, memory_type, subject_key,
             observation_json, source_json, reason, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
@@ -74,7 +74,7 @@ export class MemoryEventRepository {
         input.eventType,
         input.scope.type,
         input.scope.id,
-        input.kind,
+        input.type,
         input.subjectKey,
         observationJson,
         sourceJson,
@@ -87,7 +87,7 @@ export class MemoryEventRepository {
       memoryId: input.memoryId ?? null,
       eventType: input.eventType,
       scope: input.scope,
-      kind: input.kind,
+      type: input.type,
       subjectKey: input.subjectKey,
       observationJson,
       sourceJson,

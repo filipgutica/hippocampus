@@ -1,4 +1,9 @@
-export type MemorySourceType = 'explicit_user_statement' | 'observed_pattern' | 'tool_observation'
+export const MEMORY_TYPES = ['procedural', 'episodic', 'semantic', 'preference', 'decision'] as const
+export const MEMORY_ORIGINS = ['explicit_user_statement', 'observed_pattern', 'tool_observation'] as const
+
+export type MemoryType = (typeof MEMORY_TYPES)[number]
+
+export type MemoryOrigin = (typeof MEMORY_ORIGINS)[number]
 
 export type MemoryStatus = 'candidate' | 'active' | 'suppressed' | 'archived' | 'deleted'
 

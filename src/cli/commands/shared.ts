@@ -31,7 +31,7 @@ export const parseArgValue = (argv: string[], name: string): string | undefined 
 export const hasFlag = (argv: string[], name: string): boolean => argv.includes(name)
 
 const hasObservationArgs = (argv: string[]): boolean =>
-  ['--scope-type', '--scope-id', '--kind', '--subject', '--statement', '--details', '--source-type'].some(flag =>
+  ['--scope-type', '--scope-id', '--type', '--subject', '--statement', '--details', '--origin'].some(flag =>
     argv.includes(flag),
   )
 
@@ -94,12 +94,12 @@ const formatMemory = (memory: MemoryRecord): string =>
   [
     `id: ${memory.id}`,
     `scope: ${memory.scope.type}:${memory.scope.id}`,
-    `kind: ${memory.kind}`,
+    `type: ${memory.type}`,
     `subject: ${memory.subject}`,
     `subjectKey: ${memory.subjectKey}`,
     `statement: ${memory.statement}`,
     `details: ${memory.details ?? '-'}`,
-    `sourceType: ${memory.sourceType}`,
+    `origin: ${memory.origin}`,
     `reinforcementCount: ${memory.reinforcementCount}`,
     `policyVersion: ${memory.policyVersion}`,
     `status: ${memory.status}`,
@@ -161,7 +161,7 @@ export const formatSearchResult = (result: SearchResult): string => {
 
   if (result.fallbackReason) {
     header.push(`notice: ${result.fallbackReason}`)
-    header.push('guidance: for broader recall, use memory-list (memories list) with scope + kind')
+    header.push('guidance: for broader recall, use memory-list (memories list) with scope + type')
   }
 
   return [header.join('\n'), '', formatMemoryCollection(result)].join('\n')
@@ -204,7 +204,7 @@ export const formatMemoryHistoryResult = (result: MemoryHistoryResult): string =
         `memoryId: ${event.memoryId ?? '-'}`,
         `eventType: ${event.eventType}`,
         `scope: ${event.scope.type}:${event.scope.id}`,
-        `kind: ${event.kind}`,
+        `type: ${event.type}`,
         `subjectKey: ${event.subjectKey}`,
         `reason: ${event.reason}`,
         `createdAt: ${event.createdAt}`,

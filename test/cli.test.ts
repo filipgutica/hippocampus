@@ -97,9 +97,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           scopeId,
-          '--kind',
+          '--type',
           'preference',
-          '--source-type',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           ' Prefer pnpm ',
@@ -163,10 +163,10 @@ describe('runCli', () => {
           '--input',
           JSON.stringify({
             scope: { type: 'repo', id: '/tmp/example-repo' },
-            kind: 'preference',
+            type: 'preference',
             subject: 'Prefer pnpm',
             statement: 'Use pnpm for this repo.',
-            sourceType: 'explicit_user_statement',
+            origin: 'explicit_user_statement',
           }),
           '--json',
         ],
@@ -212,7 +212,7 @@ describe('runCli', () => {
     expect(io.getStdout()).toContain('requestedMatchMode: hybrid')
     expect(io.getStdout()).toContain('effectiveMatchMode: exact')
     expect(io.getStdout()).toContain('notice: Semantic retrieval unavailable; returned exact results only.')
-    expect(io.getStdout()).toContain('guidance: for broader recall, use memory-list (memories list) with scope + kind')
+    expect(io.getStdout()).toContain('guidance: for broader recall, use memory-list (memories list) with scope + type')
   })
 
   it('lists, inspects, shows history, and deletes memories via the CLI', async () => {
@@ -231,9 +231,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           scopeId,
-          '--kind',
+          '--type',
           'preference',
-          '--source-type',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           'Prefer pnpm',
@@ -261,12 +261,12 @@ describe('runCli', () => {
       const inspectResult = JSON.parse(inspectIo.getStdout().trim()) as {
         id: string
         status: string
-        sourceType: string
+        origin: string
         supersededByMemory: unknown
       }
       expect(inspectResult.id).toBe(memoryId)
       expect(inspectResult.status).toBe('active')
-      expect(inspectResult.sourceType).toBe('explicit_user_statement')
+      expect(inspectResult.origin).toBe('explicit_user_statement')
       expect(inspectResult.supersededByMemory).toBeNull()
 
       const historyIo = createIo()
@@ -326,9 +326,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           scopeId,
-          '--kind',
-          'workflow',
-          '--source-type',
+          '--type',
+          'procedural',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           'Run tests before commit',
@@ -390,9 +390,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           scopeId,
-          '--kind',
+          '--type',
           'preference',
-          '--source-type',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           'Prefer pnpm',
@@ -425,9 +425,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           scopeId,
-          '--kind',
+          '--type',
           'preference',
-          '--source-type',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           'Prefer pnpm',
@@ -466,9 +466,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           scopeId,
-          '--kind',
+          '--type',
           'preference',
-          '--source-type',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           'Prefer concise summaries',
@@ -518,9 +518,9 @@ describe('runCli', () => {
           'repo',
           '--scope-id',
           `${repoSymlink}${path.sep}`,
-          '--kind',
+          '--type',
           'preference',
-          '--source-type',
+          '--origin',
           'explicit_user_statement',
           '--subject',
           'Prefer pnpm',
@@ -590,9 +590,9 @@ describe('runCli', () => {
         await runCli(
           [
             'apply',
-            '--kind',
-            'workflow',
-            '--source-type',
+            '--type',
+            'procedural',
+            '--origin',
             'explicit_user_statement',
             '--subject',
             'Run tests before commit',
@@ -641,10 +641,10 @@ describe('runCli', () => {
           name: 'memory-apply-observation',
           arguments: {
             scope: { type: 'repo', id: repoSubdir },
-            kind: 'workflow',
+            type: 'procedural',
             subject: 'Use package-local scripts',
             statement: 'Use package-local scripts in this subdirectory.',
-            sourceType: 'tool_observation',
+            origin: 'tool_observation',
           },
         })
 

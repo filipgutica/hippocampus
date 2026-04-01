@@ -135,7 +135,7 @@ describe('MCP memory management tools', () => {
       expect(contradictTool).toBeDefined()
       expect(searchTool?.description).toContain('always provide `subject`')
       expect(listTool?.description).toContain('broad recall by memory class')
-      expect(listTool?.description).toContain('scope-plus-kind browsing')
+      expect(listTool?.description).toContain('scope-plus-type browsing')
       expect(getTool?.description).toContain('including non-active memories')
       expect(historyTool?.description).toContain('later archival history')
       expect(applyTool?.description).toContain('call `memory-get-policy` first')
@@ -151,10 +151,10 @@ describe('MCP memory management tools', () => {
         name: 'memory-apply-observation',
         arguments: {
           scope: { type: 'repo', id: '/tmp/example-repo' },
-          kind: 'preference',
+          type: 'preference',
           subject: 'Prefer pnpm',
           statement: 'Use pnpm for this repo.',
-          sourceType: 'explicit_user_statement',
+          origin: 'explicit_user_statement',
         },
       })
       const appliedResult = JSON.parse(getFirstTextContent(applied.content)) as { memory: { id: string } }
@@ -166,10 +166,10 @@ describe('MCP memory management tools', () => {
           id: memoryId,
           replacement: {
             scope: { type: 'repo', id: '/tmp/example-repo' },
-            kind: 'preference',
+            type: 'preference',
             subject: 'Prefer npm',
             statement: 'Use npm for this repo.',
-            sourceType: 'explicit_user_statement',
+            origin: 'explicit_user_statement',
           },
         },
       })

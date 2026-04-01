@@ -2,18 +2,18 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import type { MemoryRecord } from './models/memory-record.js'
-import type { MemorySourceType, MemoryStatus } from './types/memory.types.js'
+import type { MemoryOrigin, MemoryStatus, MemoryType } from './types/memory.types.js'
 
 type MemoryRow = {
   id: string
   scope_type: string
   scope_id: string
-  kind: string
+  memory_type: MemoryType
   subject: string
   subject_key: string
   statement: string
   details: string | null
-  source_type: MemorySourceType
+  origin: MemoryOrigin
   reinforcement_count: number
   policy_version: string
   created_at: string
@@ -31,12 +31,12 @@ type MemoryRow = {
 const toRecord = (row: MemoryRow): MemoryRecord => ({
   id: row.id,
   scope: { type: row.scope_type as ScopeRef['type'], id: row.scope_id },
-  kind: row.kind,
+  type: row.memory_type,
   subject: row.subject,
   subjectKey: row.subject_key,
   statement: row.statement,
   details: row.details,
-  sourceType: row.source_type,
+  origin: row.origin,
   reinforcementCount: row.reinforcement_count,
   policyVersion: row.policy_version,
   createdAt: row.created_at,
@@ -57,17 +57,17 @@ export class MemoryRepository {
     this.db = db
   }
 
-  findSimilar(scope: ScopeRef, kind: string, subjectKey: string): MemoryRecord | null {
+  findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): MemoryRecord | null {
     const row = this.db
       .prepare(
         `
           SELECT *
           FROM memories
-          WHERE scope_type = ? AND scope_id = ? AND kind = ? AND subject_key = ? AND status IN ('candidate', 'active')
+          WHERE scope_type = ? AND scope_id = ? AND memory_type = ? AND subject_key = ? AND status IN ('candidate', 'active')
           LIMIT 1
         `,
       )
-      .get(scope.type, scope.id, kind, subjectKey) as MemoryRow | undefined
+      .get(scope.type, scope.id, type, subjectKey) as MemoryRow | undefined
 
     return row ? toRecord(row) : null
   }
@@ -75,12 +75,12 @@ export class MemoryRepository {
   insert(input: {
     id?: string
     scope: ScopeRef
-    kind: string
+    type: MemoryType
     subject: string
     subjectKey: string
     statement: string
     details?: string | null
-    sourceType: MemorySourceType
+    origin: MemoryOrigin
     status: MemoryStatus
     policyVersion: string
     reinforcementCount?: number
@@ -100,8 +100,8 @@ export class MemoryRepository {
       .prepare(
         `
           INSERT INTO memories (
-            id, scope_type, scope_id, kind, subject, subject_key, statement, details,
-            source_type, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at,
+            id, scope_type, scope_id, memory_type, subject, subject_key, statement, details,
+            origin, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at,
             retrieval_count, last_retrieved_at, strength, status, superseded_by, deleted_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
@@ -110,12 +110,12 @@ export class MemoryRepository {
         id,
         input.scope.type,
         input.scope.id,
-        input.kind,
+        input.type,
         input.subject,
         input.subjectKey,
         input.statement,
         input.details ?? null,
-        input.sourceType,
+        input.origin,
         reinforcementCount,
         input.policyVersion,
         input.now,
@@ -133,12 +133,12 @@ export class MemoryRepository {
     return {
       id,
       scope: input.scope,
-      kind: input.kind,
+      type: input.type,
       subject: input.subject,
       subjectKey: input.subjectKey,
       statement: input.statement,
       details: input.details ?? null,
-      sourceType: input.sourceType,
+      origin: input.origin,
       reinforcementCount,
       policyVersion: input.policyVersion,
       createdAt: input.now,
@@ -157,7 +157,7 @@ export class MemoryRepository {
     memory: MemoryRecord
     statement: string
     details?: string | null
-    sourceType: MemorySourceType
+    origin: MemoryOrigin
     status: MemoryStatus
     reinforcementCount: number
     policyVersion: string
@@ -167,7 +167,7 @@ export class MemoryRepository {
       ...input.memory,
       statement: input.statement,
       details: input.details ?? input.memory.details,
-      sourceType: input.sourceType,
+      origin: input.origin,
       reinforcementCount: input.reinforcementCount,
       policyVersion: input.policyVersion,
       updatedAt: input.now,
@@ -181,14 +181,14 @@ export class MemoryRepository {
       .prepare(
         `
           UPDATE memories
-          SET statement = ?, details = ?, source_type = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, last_reinforced_at = ?, status = ?, superseded_by = NULL, deleted_at = NULL
+          SET statement = ?, details = ?, origin = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, last_reinforced_at = ?, status = ?, superseded_by = NULL, deleted_at = NULL
           WHERE id = ?
         `,
       )
       .run(
         next.statement,
         next.details,
-        next.sourceType,
+        next.origin,
         next.reinforcementCount,
         next.policyVersion,
         next.updatedAt,
@@ -203,15 +203,15 @@ export class MemoryRepository {
 
   search(input: {
     scope: ScopeRef
-    kind?: string | null
+    type?: MemoryType | null
     subject?: string | null
   }): MemoryRecord[] {
     const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
     const params: Array<string> = [input.scope.type, input.scope.id]
 
-    if (input.kind) {
-      clauses.push('kind = ?')
-      params.push(input.kind)
+    if (input.type) {
+      clauses.push('memory_type = ?')
+      params.push(input.type)
     }
 
     if (input.subject) {
@@ -228,15 +228,15 @@ export class MemoryRepository {
 
   list(input: {
     scope: ScopeRef
-    kind?: string | null
+    type?: MemoryType | null
     limit?: number | null
   }): MemoryRecord[] {
     const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
     const params: Array<string | number> = [input.scope.type, input.scope.id]
 
-    if (input.kind) {
-      clauses.push('kind = ?')
-      params.push(input.kind)
+    if (input.type) {
+      clauses.push('memory_type = ?')
+      params.push(input.type)
     }
 
     const limitClause = input.limit != null ? ' LIMIT ?' : ''

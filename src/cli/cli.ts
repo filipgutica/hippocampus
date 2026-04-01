@@ -3,7 +3,8 @@ import { buildApp, type RuntimeApp } from '../app/build-app.js'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../memory/dto/apply-observation.dto.js'
 import type { SearchMatchMode } from '../memory/dto/search-memories.dto.js'
-import type { MemorySourceType } from '../memory/types/memory.types.js'
+import { MEMORY_ORIGINS, MEMORY_TYPES } from '../memory/types/memory.types.js'
+import type { MemoryOrigin, MemoryType } from '../memory/types/memory.types.js'
 import { resolveRepoScopeId } from '../repos/types.js'
 import { runApplyCommand } from './commands/apply.command.js'
 import { runGetPolicyCommand } from './commands/get-policy.command.js'
@@ -28,10 +29,10 @@ type ScopeArgs = {
 
 type ApplyArgs = ScopeArgs &
   JsonOption & {
-    kind?: string
+    type?: MemoryType
     subject?: string
     statement?: string
-    sourceType?: MemorySourceType
+    origin?: MemoryOrigin
     details?: string
     input?: string
     inputFile?: string
@@ -39,7 +40,7 @@ type ApplyArgs = ScopeArgs &
 
 type SearchArgs = ScopeArgs &
   JsonOption & {
-    kind?: string
+    type?: MemoryType
     subject?: string
     limit?: number
     matchMode?: SearchMatchMode
@@ -80,10 +81,10 @@ const loadApplyInput = (args: ApplyArgs, argv: string[]): ApplyObservationInput 
 
   return {
     scope: parsedInput.scope ?? resolveScope(args),
-    kind: parsedInput.kind ?? args.kind ?? '',
+    type: parsedInput.type ?? args.type ?? ('' as MemoryType),
     subject: parsedInput.subject ?? args.subject ?? '',
     statement: parsedInput.statement ?? args.statement ?? '',
-    sourceType: parsedInput.sourceType ?? args.sourceType ?? ('' as MemorySourceType),
+    origin: parsedInput.origin ?? args.origin ?? ('' as MemoryOrigin),
     details: parsedInput.details ?? args.details ?? null,
     source: resolveObservationSource(parsedInput) ?? { channel: 'cli' },
   }
@@ -140,8 +141,9 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('scope-id', {
             type: 'string',
           })
-          .option('kind', {
+          .option('type', {
             type: 'string',
+            choices: MEMORY_TYPES,
           })
           .option('subject', {
             type: 'string',
@@ -149,9 +151,9 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('statement', {
             type: 'string',
           })
-          .option('source-type', {
+          .option('origin', {
             type: 'string',
-            choices: ['explicit_user_statement', 'observed_pattern', 'tool_observation'] as const,
+            choices: MEMORY_ORIGINS,
           })
           .option('details', {
             type: 'string',
@@ -165,9 +167,10 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('json', {
             type: 'boolean',
             default: false,
-          }),
+      }),
       handler: async args => {
-        await withRuntimeApp(app => runApplyCommand(app, loadApplyInput(args, argv), io, args.json ?? false))
+        const applyArgs = args as ApplyArgs
+        await withRuntimeApp(app => runApplyCommand(app, loadApplyInput(applyArgs, argv), io, applyArgs.json ?? false))
       },
     })
     .command({
@@ -182,8 +185,9 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('scope-id', {
             type: 'string',
           })
-          .option('kind', {
+          .option('type', {
             type: 'string',
+            choices: MEMORY_TYPES,
           })
           .option('subject', {
             type: 'string',
@@ -207,7 +211,7 @@ const createParser = (argv: string[], io: CliIO) => {
               app,
               {
                 scope: resolveScope(searchArgs),
-                kind: searchArgs.kind ?? null,
+                type: searchArgs.type ?? null,
                 subject: searchArgs.subject ?? '',
                 limit: searchArgs.limit ?? null,
                 matchMode: searchArgs.matchMode ?? null,
@@ -260,8 +264,9 @@ const createParser = (argv: string[], io: CliIO) => {
                 .option('scope-id', {
                   type: 'string',
                 })
-                .option('kind', {
+                .option('type', {
                   type: 'string',
+                  choices: MEMORY_TYPES,
                 })
                 .option('limit', {
                   type: 'number',
@@ -279,7 +284,7 @@ const createParser = (argv: string[], io: CliIO) => {
                       scopeType: args.scopeType as ScopeType | undefined,
                       scopeId: typeof args.scopeId === 'string' ? args.scopeId : undefined,
                     }),
-                    kind: typeof args.kind === 'string' ? args.kind : null,
+                    type: typeof args.type === 'string' ? (args.type as MemoryType) : null,
                     limit: typeof args.limit === 'number' ? args.limit : null,
                   },
                   io,

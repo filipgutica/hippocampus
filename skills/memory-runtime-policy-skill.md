@@ -65,7 +65,11 @@ Engram mapping for the mental model:
 - `retrievalCount`, `lastRetrievedAt`, and `strength` are operational ranking signals, not evidence.
 - Only successful `memory-search` results update retrieval strength.
 - Retrieval strength decays over time from `lastRetrievedAt` and is used only as a ranking tie-break after exact/semantic relevance.
-- Automatic stale archival still keys off `lastReinforcedAt`, not recent retrieval.
+- Automatic stale archival requires both write-side and retrieval-side staleness.
+- A memory is stale only when `lastReinforcedAt` is beyond the threshold and `lastRetrievedAt` is either missing or beyond the threshold.
+- Default stale thresholds are scope-aware: `user` and `org` use 90 days, `repo` uses 365 days.
+- Automatic stale archival runs on a 24-hour cooldown before normal retrieval flows.
+- `memories maintain` (CLI) flushes decayed retrieval `strength` to the stored column for boosted active memories. Run it explicitly or on a schedule; it does not run automatically. Supports `--dry-run` to preview and `--batch-size` to control how many memories are processed per invocation.
 
 ## Contradiction and supersession
 - Use contradiction when an existing memory is no longer trustworthy and should point to newer state.

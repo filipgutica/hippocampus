@@ -314,7 +314,7 @@ describe('runCli', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const home = createTempDir()
-    const scopeId = '/tmp/example-repo'
+    const scopeId = 'cli-user'
 
     await withAppHome(home, async () => {
       await runCli(['init'], createIo().io)
@@ -323,7 +323,7 @@ describe('runCli', () => {
         [
           'apply',
           '--scope-type',
-          'repo',
+          'user',
           '--scope-id',
           scopeId,
           '--type',
@@ -345,11 +345,15 @@ describe('runCli', () => {
       await runCli(['memories', 'archive-stale', '--dry-run', '--json'], dryRunIo.io)
       const dryRunResult = JSON.parse(dryRunIo.getStdout().trim()) as {
         dryRun: boolean
+        olderThanDays: number | null
+        cutoffByScope: Record<'user' | 'repo' | 'org', string>
         total: number
         items: Array<{ status: string }>
       }
 
       expect(dryRunResult.dryRun).toBe(true)
+      expect(dryRunResult.olderThanDays).toBeNull()
+      expect(Object.keys(dryRunResult.cutoffByScope)).toEqual(['user', 'repo', 'org'])
       expect(dryRunResult.total).toBe(1)
       expect(dryRunResult.items[0]?.status).toBe('active')
 
@@ -357,11 +361,15 @@ describe('runCli', () => {
       await runCli(['memories', 'archive-stale', '--json'], archiveIo.io)
       const archiveResult = JSON.parse(archiveIo.getStdout().trim()) as {
         dryRun: boolean
+        olderThanDays: number | null
+        cutoffByScope: Record<'user' | 'repo' | 'org', string>
         total: number
         items: Array<{ status: string; id: string }>
       }
 
       expect(archiveResult.dryRun).toBe(false)
+      expect(archiveResult.olderThanDays).toBeNull()
+      expect(Object.keys(archiveResult.cutoffByScope)).toEqual(['user', 'repo', 'org'])
       expect(archiveResult.total).toBe(1)
       expect(archiveResult.items[0]?.status).toBe('archived')
 
@@ -377,7 +385,7 @@ describe('runCli', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const home = createTempDir()
-    const scopeId = '/tmp/example-repo'
+    const scopeId = 'cli-user'
 
     await withAppHome(home, async () => {
       await runCli(['init'], createIo().io)
@@ -387,7 +395,7 @@ describe('runCli', () => {
         [
           'apply',
           '--scope-type',
-          'repo',
+          'user',
           '--scope-id',
           scopeId,
           '--type',
@@ -408,7 +416,7 @@ describe('runCli', () => {
       vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
 
       const listIo = createIo()
-      await runCli(['memories', 'list', '--scope-type', 'repo', '--scope-id', scopeId, '--json'], listIo.io)
+      await runCli(['memories', 'list', '--scope-type', 'user', '--scope-id', scopeId, '--json'], listIo.io)
       const listResult = JSON.parse(listIo.getStdout().trim()) as { total: number }
       expect(listResult.total).toBe(0)
 
@@ -422,7 +430,7 @@ describe('runCli', () => {
         [
           'apply',
           '--scope-type',
-          'repo',
+          'user',
           '--scope-id',
           scopeId,
           '--type',
@@ -487,11 +495,13 @@ describe('runCli', () => {
       await runCli(['memories', 'archive-stale', '--older-than-days', '60', '--json'], archiveIo.io)
       const archiveResult = JSON.parse(archiveIo.getStdout().trim()) as {
         olderThanDays: number
+        cutoffByScope: Record<'user' | 'repo' | 'org', string>
         total: number
         items: Array<{ id: string; status: string }>
       }
 
       expect(archiveResult.olderThanDays).toBe(60)
+      expect(new Set(Object.values(archiveResult.cutoffByScope)).size).toBe(1)
       expect(archiveResult.total).toBe(1)
       expect(archiveResult.items[0]?.id).toBe(created.memory.id)
       expect(archiveResult.items[0]?.status).toBe('archived')

@@ -132,7 +132,7 @@ describe('MCP guidance resource', () => {
         resources: Array<{ role: string; uri: string; artifact: string; title: string }>
       }
 
-      expect(policy.policyVersion).toBe('4')
+      expect(policy.policyVersion).toBe('5')
       expect(policy.description).toContain('Read the returned resource URIs')
       expect(policy.canonicalPolicy).toEqual({
         uri: runtimeMemoryPolicyResource.resourceUri,

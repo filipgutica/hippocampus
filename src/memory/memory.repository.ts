@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import type { ScopeRef } from '../common/types/scope-ref.js'
+import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import type { MemoryRecord } from './models/memory-record.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from './types/memory.types.js'
 
@@ -254,10 +254,17 @@ export class MemoryRepository {
   }
 
   listStaleMemories(input: {
-    cutoffAt: string
+    cutoffByScope: Record<ScopeType, string>
     limit?: number | null
   }): MemoryRecord[] {
-    const params: Array<string | number> = [input.cutoffAt]
+    const params: Array<string | number> = [
+      input.cutoffByScope.user,
+      input.cutoffByScope.repo,
+      input.cutoffByScope.org,
+      input.cutoffByScope.user,
+      input.cutoffByScope.repo,
+      input.cutoffByScope.org,
+    ]
     const limitClause = input.limit != null ? ' LIMIT ?' : ''
 
     if (input.limit != null) {
@@ -269,7 +276,20 @@ export class MemoryRepository {
         `
           SELECT *
           FROM memories
-          WHERE status IN ('candidate', 'active') AND last_reinforced_at <= ?
+          WHERE status IN ('candidate', 'active')
+            AND last_reinforced_at <= CASE scope_type
+              WHEN 'user' THEN ?
+              WHEN 'repo' THEN ?
+              ELSE ?
+            END
+            AND (
+              last_retrieved_at IS NULL
+              OR last_retrieved_at <= CASE scope_type
+                WHEN 'user' THEN ?
+                WHEN 'repo' THEN ?
+                ELSE ?
+              END
+            )
           ORDER BY last_reinforced_at ASC, created_at ASC
           ${limitClause}
         `,
@@ -277,6 +297,51 @@ export class MemoryRepository {
       .all(...params) as MemoryRow[]
 
     return rows.map(toRecord)
+  }
+
+  listForMaintenance(input: {
+    scope?: ScopeRef | null
+    floor: number
+    limit: number
+  }): MemoryRecord[] {
+    const clauses = ["status = 'active'", 'last_retrieved_at IS NOT NULL', 'strength > ?']
+    const params: Array<string | number> = [input.floor]
+
+    if (input.scope) {
+      clauses.push('scope_type = ?', 'scope_id = ?')
+      params.push(input.scope.type, input.scope.id)
+    }
+
+    params.push(input.limit)
+
+    const rows = this.db
+      .prepare(
+        `
+          SELECT * FROM memories
+          WHERE ${clauses.join(' AND ')}
+          ORDER BY last_retrieved_at ASC
+          LIMIT ?
+        `,
+      )
+      .all(...params) as MemoryRow[]
+
+    return rows.map(toRecord)
+  }
+
+  flushStrength(input: {
+    id: string
+    strength: number
+    now: string
+  }): void {
+    this.db
+      .prepare(
+        `
+          UPDATE memories
+          SET strength = ?, updated_at = ?
+          WHERE id = ?
+        `,
+      )
+      .run(input.strength, input.now, input.id)
   }
 
   getById(id: string): MemoryRecord | null {

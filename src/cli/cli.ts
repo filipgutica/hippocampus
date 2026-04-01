@@ -11,6 +11,7 @@ import { runGetPolicyCommand } from './commands/get-policy.command.js'
 import { runInitCommand } from './commands/init.command.js'
 import { runMcpServeCommand } from './commands/mcp-serve.command.js'
 import { runMemoriesArchiveStaleCommand } from './commands/memories-archive-stale.command.js'
+import { runMemoriesMaintainCommand } from './commands/memories-maintain.command.js'
 import { runMemoriesDeleteCommand } from './commands/memories-delete.command.js'
 import { runMemoriesHistoryCommand } from './commands/memories-history.command.js'
 import { runMemoriesInspectCommand } from './commands/memories-inspect.command.js'
@@ -300,7 +301,6 @@ const createParser = (argv: string[], io: CliIO) => {
               commandParser
                 .option('older-than-days', {
                   type: 'number',
-                  default: 90,
                 })
                 .option('dry-run', {
                   type: 'boolean',
@@ -316,6 +316,56 @@ const createParser = (argv: string[], io: CliIO) => {
                   app,
                   {
                     olderThanDays: typeof args.olderThanDays === 'number' ? args.olderThanDays : null,
+                    dryRun: Boolean(args.dryRun),
+                  },
+                  io,
+                  Boolean(args.json),
+                ),
+              )
+            },
+          })
+          .command({
+            command: 'maintain',
+            describe: 'Flush decayed retrieval strength for boosted active memories. Runs in bounded batches; re-run to process more. Without --scope-type/--scope-id runs across all scopes.',
+            builder: commandParser =>
+              commandParser
+                .option('scope-type', {
+                  type: 'string',
+                  choices: ['user', 'repo', 'org'] as const,
+                })
+                .option('scope-id', {
+                  type: 'string',
+                })
+                .option('batch-size', {
+                  type: 'number',
+                })
+                .option('dry-run', {
+                  type: 'boolean',
+                  default: false,
+                })
+                .option('json', {
+                  type: 'boolean',
+                  default: false,
+                }),
+            handler: async args => {
+              const scopeType = args.scopeType as ScopeType | undefined
+              const scopeId = typeof args.scopeId === 'string' ? args.scopeId : undefined
+
+              if ((scopeType != null) !== (scopeId != null)) {
+                throw new Error('--scope-type and --scope-id must be provided together or not at all.')
+              }
+
+              const scope =
+                scopeType && scopeId
+                  ? ({ type: scopeType, id: scopeId } satisfies ScopeRef)
+                  : null
+
+              await withRuntimeApp(app =>
+                runMemoriesMaintainCommand(
+                  app,
+                  {
+                    scope,
+                    batchSize: typeof args.batchSize === 'number' ? args.batchSize : null,
                     dryRun: Boolean(args.dryRun),
                   },
                   io,

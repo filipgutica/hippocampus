@@ -7,6 +7,7 @@ import type {
   ApplyMemoryResult,
   ArchiveStaleMemoriesResult,
   DeleteMemoryResult,
+  MaintenancePassResult,
   MemoryHistoryResult,
   MemoryListResult,
   SearchResult,
@@ -170,11 +171,19 @@ export const formatSearchResult = (result: SearchResult): string => {
 export const formatMemoryListResult = (result: MemoryListResult): string => formatMemoryCollection(result)
 
 export const formatArchiveStaleMemoriesResult = (result: ArchiveStaleMemoriesResult): string => {
+  const olderThanDays = result.olderThanDays == null ? 'scope-aware' : `${result.olderThanDays}`
+  const cutoffByScope = [
+    'cutoffByScope:',
+    `  user: ${result.cutoffByScope.user}`,
+    `  repo: ${result.cutoffByScope.repo}`,
+    `  org: ${result.cutoffByScope.org}`,
+  ]
+
   if (result.items.length === 0) {
     return [
       result.dryRun ? 'stale memories preview.' : 'stale memories archived.',
-      `olderThanDays: ${result.olderThanDays}`,
-      `cutoffAt: ${result.cutoffAt}`,
+      `olderThanDays: ${olderThanDays}`,
+      ...cutoffByScope,
       `total: ${result.total}`,
       'items: none',
     ].join('\n')
@@ -182,11 +191,40 @@ export const formatArchiveStaleMemoriesResult = (result: ArchiveStaleMemoriesRes
 
   return [
     result.dryRun ? 'stale memories preview.' : 'stale memories archived.',
-    `olderThanDays: ${result.olderThanDays}`,
-    `cutoffAt: ${result.cutoffAt}`,
+    `olderThanDays: ${olderThanDays}`,
+    ...cutoffByScope,
     '',
     formatMemoryCollection(result),
   ].join('\n')
+}
+
+export const formatMaintenanceResult = (result: MaintenancePassResult): string => {
+  const header = [
+    result.dryRun ? 'maintenance preview (dry-run).' : 'maintenance complete.',
+    `batchSize: ${result.batchSize}`,
+    `total: ${result.total}`,
+    `flushed: ${result.flushed.length}`,
+    `unchanged: ${result.unchanged}`,
+  ]
+
+  if (result.flushed.length === 0) {
+    return [...header, 'items: none'].join('\n')
+  }
+
+  return [
+    header.join('\n'),
+    '',
+    ...result.flushed.map((entry, index) =>
+      [
+        `[${index + 1}]`,
+        `id: ${entry.id}`,
+        `scope: ${entry.scope.type}:${entry.scope.id}`,
+        `type: ${entry.type}`,
+        `subject: ${entry.subject}`,
+        `strength: ${entry.oldStrength.toFixed(4)} → ${entry.newStrength.toFixed(4)}`,
+      ].join('\n'),
+    ),
+  ].join('\n\n')
 }
 
 export const formatMemoryHistoryResult = (result: MemoryHistoryResult): string => {

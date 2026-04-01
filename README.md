@@ -195,7 +195,10 @@ Current retrieval behavior:
 - `memory-list`, `memory-get`, and `memory-get-history` stay retrieval-neutral
 - retrieval `strength` decays over time from `lastRetrievedAt` and is used only as a search tie-break, not as evidence
 - a `candidate` memory promotes to `active` after enough reinforcement
-- stale `candidate` and `active` memories may be archived automatically based on `lastReinforcedAt`
+- stale `candidate` and `active` memories are archived only when both `lastReinforcedAt` and `lastRetrievedAt` are stale, or when they were never retrieved
+- default archival thresholds are scope-aware: `user` and `org` archive after 90 days, `repo` archives after 365 days
+- automatic archival runs on a 24-hour cooldown before normal retrieval flows
+- `memories maintain` flushes decayed retrieval strength to the stored column for boosted memories; run explicitly or on a schedule; supports `--dry-run` and `--batch-size`
 - archived memories stay inspectable through `memory-get` and `memory-get-history`
 - archived memories are not resurrected by normal reinforcement; a new matching observation creates a new memory
 
@@ -214,6 +217,9 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories list \
   --json
 
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories archive-stale --json
+HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories archive-stale --older-than-days 60 --json
+HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories maintain --dry-run --json
+HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories maintain --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories inspect --id <memory-id> --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories history --id <memory-id> --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-id> --json

@@ -745,6 +745,7 @@ describe('MemoryService', () => {
     }
 
     vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+    memoryRuntimeStateRepository.setLastAutoArchiveSweepAt('2026-04-05T00:00:00.000Z')
     const initialSweepAt = memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
 
     await expect(
@@ -824,7 +825,7 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
 
     const active = service.applyObservation({
       scope,
@@ -896,6 +897,10 @@ describe('MemoryService', () => {
       source: { channel: 'cli' },
     })
 
+    expect(dryRun.olderThanDays).toBeNull()
+    expect(dryRun.cutoffByScope.user).toBe('2026-01-05T00:00:00.000Z')
+    expect(dryRun.cutoffByScope.org).toBe('2026-01-05T00:00:00.000Z')
+    expect(dryRun.cutoffByScope.repo).toBe('2025-04-05T00:00:00.000Z')
     expect(dryRun.total).toBe(3)
     expect(contradicted.replacementMemory.type).toBe('semantic')
     expect(contradicted.contradictedMemory.type).toBe('preference')
@@ -929,6 +934,7 @@ describe('MemoryService', () => {
     })
 
     expect(archived.total).toBe(3)
+    expect(archived.olderThanDays).toBeNull()
     expect(archived.items.map(item => item.id).sort()).toEqual([
       active.memory.id,
       candidate.memory.id,
@@ -954,7 +960,7 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
     const created = service.applyObservation({
       scope,
       type: 'preference',
@@ -1031,7 +1037,7 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, memoryRuntimeStateRepository, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
 
     const readOnlyCreated = service.applyObservation({
       scope,
@@ -1058,6 +1064,7 @@ describe('MemoryService', () => {
     }
 
     vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+    memoryRuntimeStateRepository.setLastAutoArchiveSweepAt('2026-04-05T00:00:00.000Z')
 
     expect(service.getMemory({ id: readOnlyCreated.memory.id }).status).toBe('active')
     expect(service.getMemoryHistory({ id: readOnlyCreated.memory.id }).items.map(item => item.eventType)).toEqual([
@@ -1079,8 +1086,8 @@ describe('MemoryService', () => {
       subject: 'read docs before coding',
       limit: 10,
     })
-    expect(archivedBySearch.total).toBe(0)
-    expect(service.getMemory({ id: readOnlyCreated.memory.id }).status).toBe('archived')
+    expect(archivedBySearch.total).toBe(1)
+    expect(service.getMemory({ id: readOnlyCreated.memory.id }).status).toBe('active')
 
     const cooldownCreated = service.applyObservation({
       scope,
@@ -1104,20 +1111,30 @@ describe('MemoryService', () => {
 
     vi.setSystemTime(new Date('2026-04-05T12:00:00.000Z'))
 
+    memoryRuntimeStateRepository.setLastAutoArchiveSweepAt('2026-04-05T00:00:00.000Z')
+
     const duringCooldown = await service.searchMemories({
       scope,
       subject: 'keep commits focused',
+      matchMode: 'exact',
       limit: 10,
     })
     expect(duringCooldown.total).toBe(1)
     expect(duringCooldown.items[0]?.id).toBe(cooldownCreated.memory.id)
     expect(service.getMemory({ id: cooldownCreated.memory.id }).status).toBe('active')
 
+    db.prepare('UPDATE memories SET last_retrieved_at = ?, updated_at = ? WHERE id = ?').run(
+      '2025-12-01T00:00:00.000Z',
+      '2025-12-01T00:00:00.000Z',
+      cooldownCreated.memory.id,
+    )
+
     memoryRuntimeStateRepository.setLastAutoArchiveSweepAt('2026-04-04T00:00:00.000Z')
 
     const afterCooldown = await service.searchMemories({
       scope,
       subject: 'keep commits focused',
+      matchMode: 'exact',
       limit: 10,
     })
     expect(afterCooldown.total).toBe(0)
@@ -1131,7 +1148,7 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, memoryRuntimeStateRepository, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -1162,12 +1179,12 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('archives based on lastReinforcedAt rather than recent retrieval activity', async () => {
+  it('protects recently-retrieved memories from archival even when last_reinforced_at is stale', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -1200,8 +1217,172 @@ describe('MemoryService', () => {
       limit: 10,
     })
 
-    expect(search.total).toBe(0)
+    expect(search.total).toBe(1)
+    expect(search.items[0]?.id).toBe(created.memory.id)
+    expect(service.getMemory({ id: created.memory.id }).status).toBe('active')
+
+    db.close()
+  })
+
+  it('does not archive repo memories at the user threshold when using scope-aware defaults', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      type: 'procedural',
+      subject: 'keep release notes current',
+      statement: 'Keep release notes current.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    const archived = service.archiveStaleMemories({
+      source: { channel: 'cli' },
+    })
+
+    expect(archived.total).toBe(0)
+    expect(service.getMemory({ id: created.memory.id }).status).toBe('active')
+
+    db.close()
+  })
+
+  it('archives repo memories when both reinforcement and retrieval exceed the repo threshold', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2025-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      type: 'procedural',
+      subject: 'run migration checks',
+      statement: 'Run migration checks.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    db.prepare(
+      'UPDATE memories SET retrieval_count = ?, last_retrieved_at = ?, strength = ? WHERE id = ?',
+    ).run(4, '2025-01-01T00:00:00.000Z', 2.0, created.memory.id)
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    const archived = service.archiveStaleMemories({
+      source: { channel: 'cli' },
+    })
+
+    expect(archived.total).toBe(1)
+    expect(archived.items[0]?.id).toBe(created.memory.id)
     expect(service.getMemory({ id: created.memory.id }).status).toBe('archived')
+
+    db.close()
+  })
+
+  it('uses scope-aware thresholds during the automatic sweep', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const userScope: ScopeRef = { type: 'user', id: 'default-user' }
+    const repoScope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const userMemory = service.applyObservation({
+      scope: userScope,
+      type: 'preference',
+      subject: 'prefer concise summaries',
+      statement: 'Prefer concise summaries.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const repoMemory = service.applyObservation({
+      scope: repoScope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (userMemory.decision !== 'create' || !('memory' in userMemory)) {
+      throw new Error('Expected user-scope memory creation.')
+    }
+    if (repoMemory.decision !== 'create' || !('memory' in repoMemory)) {
+      throw new Error('Expected repo-scope memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    const listed = service.listMemories({
+      scope: repoScope,
+      limit: 10,
+    })
+
+    expect(listed.total).toBe(1)
+    expect(listed.items[0]?.id).toBe(repoMemory.memory.id)
+    expect(service.getMemory({ id: userMemory.memory.id }).status).toBe('archived')
+    expect(service.getMemory({ id: repoMemory.memory.id }).status).toBe('active')
+
+    db.close()
+  })
+
+  it('applies an explicit archive override uniformly across scopes', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const userScope: ScopeRef = { type: 'user', id: 'default-user' }
+    const repoScope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const userMemory = service.applyObservation({
+      scope: userScope,
+      type: 'preference',
+      subject: 'prefer short answers',
+      statement: 'Prefer short answers.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const repoMemory = service.applyObservation({
+      scope: repoScope,
+      type: 'preference',
+      subject: 'prefer npm',
+      statement: 'Use npm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (userMemory.decision !== 'create' || !('memory' in userMemory)) {
+      throw new Error('Expected user-scope memory creation.')
+    }
+    if (repoMemory.decision !== 'create' || !('memory' in repoMemory)) {
+      throw new Error('Expected repo-scope memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+
+    const archived = service.archiveStaleMemories({
+      olderThanDays: 60,
+      source: { channel: 'cli' },
+    })
+
+    expect(archived.olderThanDays).toBe(60)
+    expect(archived.cutoffByScope.user).toBe('2026-02-04T00:00:00.000Z')
+    expect(archived.cutoffByScope.repo).toBe('2026-02-04T00:00:00.000Z')
+    expect(archived.cutoffByScope.org).toBe('2026-02-04T00:00:00.000Z')
+    expect(archived.total).toBe(2)
+    expect(archived.items.map(item => item.id).sort()).toEqual([userMemory.memory.id, repoMemory.memory.id].sort())
 
     db.close()
   })
@@ -1211,7 +1392,7 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, memoryRuntimeStateRepository, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
 
     for (let index = 0; index < 51; index += 1) {
       service.applyObservation({
@@ -1303,4 +1484,275 @@ describe('MemoryService', () => {
 
     db.close()
   })
+
+  describe('runMaintenance', () => {
+    it('dry-run returns flush entries without modifying the DB', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+      const created = service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+      if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+
+      db.prepare('UPDATE memories SET strength = 2.0, last_retrieved_at = ? WHERE id = ?').run(
+        '2025-06-01T00:00:00.000Z',
+        created.memory.id,
+      )
+
+      const result = service.runMaintenance({ dryRun: true })
+
+      expect(result.dryRun).toBe(true)
+      expect(result.flushed.length).toBe(1)
+      expect(result.flushed[0]?.id).toBe(created.memory.id)
+      expect(result.flushed[0]?.oldStrength).toBe(2.0)
+      expect(result.flushed[0]?.newStrength).toBeLessThan(2.0)
+      expect(result.flushed[0]?.newStrength).toBeGreaterThanOrEqual(1.0)
+      expect(result.unchanged).toBe(0)
+
+      const stored = db.prepare('SELECT strength FROM memories WHERE id = ?').get(created.memory.id) as { strength: number }
+      expect(stored.strength).toBe(2.0)
+
+      db.close()
+    })
+
+    it('flushes decayed strength to the DB on a live run', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+      const created = service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+      if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+
+      db.prepare('UPDATE memories SET strength = 3.0, last_retrieved_at = ? WHERE id = ?').run(
+        '2025-01-01T00:00:00.000Z',
+        created.memory.id,
+      )
+
+      const result = service.runMaintenance({})
+
+      expect(result.dryRun).toBe(false)
+      expect(result.flushed.length).toBe(1)
+
+      const stored = db.prepare('SELECT strength FROM memories WHERE id = ?').get(created.memory.id) as { strength: number }
+      expect(stored.strength).toBeLessThan(3.0)
+      expect(stored.strength).toBeGreaterThanOrEqual(1.0)
+      expect(stored.strength).toBe(result.flushed[0]?.newStrength)
+
+      db.close()
+    })
+
+    it('excludes memories with strength at or below the floor', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+      const created = service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+      if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+
+      db.prepare('UPDATE memories SET strength = 1.0, last_retrieved_at = ? WHERE id = ?').run(
+        '2025-01-01T00:00:00.000Z',
+        created.memory.id,
+      )
+
+      const result = service.runMaintenance({})
+
+      expect(result.flushed.length).toBe(0)
+      expect(result.unchanged).toBe(0)
+      expect(result.total).toBe(0)
+
+      db.close()
+    })
+
+    it('excludes memories that have never been retrieved', () => {
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+      const created = service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+      if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+
+      expect(created.memory.lastRetrievedAt).toBeNull()
+
+      const result = service.runMaintenance({})
+
+      expect(result.flushed.length).toBe(0)
+      expect(result.total).toBe(0)
+
+      db.close()
+    })
+
+    it('counts as unchanged when effective strength is already close to stored', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+      const created = service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+      if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+
+      const justNow = new Date('2026-01-01T00:00:00.000Z').toISOString()
+      db.prepare('UPDATE memories SET strength = 1.5, last_retrieved_at = ? WHERE id = ?').run(
+        justNow,
+        created.memory.id,
+      )
+
+      const result = service.runMaintenance({})
+
+      expect(result.flushed.length).toBe(0)
+      expect(result.unchanged).toBe(1)
+      expect(result.total).toBe(1)
+
+      db.close()
+    })
+
+    it('flushes a near-floor row to exactly the floor so it exits future batches', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+      const created = service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+      if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+
+      // stored = 1.001 (just above floor), last retrieved far enough ago that effective decays to 1.0 exactly
+      // 0.95^N * 1.001 < 1.0 after enough days → clamped to 1.0
+      // |1.0 - 1.001| = 0.001 — must be treated as ≥ threshold and flushed
+      db.prepare('UPDATE memories SET strength = 1.001, last_retrieved_at = ? WHERE id = ?').run(
+        '2020-01-01T00:00:00.000Z',
+        created.memory.id,
+      )
+
+      const result = service.runMaintenance({})
+
+      expect(result.flushed.length).toBe(1)
+      expect(result.flushed[0]?.oldStrength).toBe(1.001)
+      expect(result.flushed[0]?.newStrength).toBe(1.0)
+
+      // verify the stored value is now exactly the floor
+      const stored = db.prepare('SELECT strength FROM memories WHERE id = ?').get(created.memory.id) as { strength: number }
+      expect(stored.strength).toBe(1.0)
+
+      // a second maintenance run must not select this row (strength is now at floor, not above it)
+      const secondRun = service.runMaintenance({})
+      expect(secondRun.total).toBe(0)
+
+      db.close()
+    })
+
+    it('respects batchSize limit', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const oldDate = '2025-01-01T00:00:00.000Z'
+
+      for (let i = 0; i < 5; i += 1) {
+        const created = service.applyObservation({
+          scope,
+          type: 'preference',
+          subject: `subject ${i}`,
+          statement: `Statement ${i}.`,
+          origin: 'explicit_user_statement',
+          source: { channel: 'cli' },
+        })
+        if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+        db.prepare('UPDATE memories SET strength = 2.0, last_retrieved_at = ? WHERE id = ?').run(
+          oldDate,
+          created.memory.id,
+        )
+      }
+
+      const result = service.runMaintenance({ batchSize: 2 })
+
+      expect(result.batchSize).toBe(2)
+      expect(result.flushed.length + result.unchanged).toBeLessThanOrEqual(2)
+      expect(result.total).toBeLessThanOrEqual(2)
+
+      db.close()
+    })
+
+    it('restricts to the given scope when provided', () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+      const { db, service } = createService()
+      const scopeA: ScopeRef = { type: 'repo', id: '/tmp/repo-a' }
+      const scopeB: ScopeRef = { type: 'repo', id: '/tmp/repo-b' }
+      const oldDate = '2025-01-01T00:00:00.000Z'
+
+      for (const scope of [scopeA, scopeB]) {
+        const created = service.applyObservation({
+          scope,
+          type: 'preference',
+          subject: 'prefer pnpm',
+          statement: 'Use pnpm.',
+          origin: 'explicit_user_statement',
+          source: { channel: 'cli' },
+        })
+        if (created.decision !== 'create' || !('memory' in created)) throw new Error('Expected create.')
+        db.prepare('UPDATE memories SET strength = 2.0, last_retrieved_at = ? WHERE id = ?').run(
+          oldDate,
+          created.memory.id,
+        )
+      }
+
+      const result = service.runMaintenance({ scope: scopeA })
+
+      expect(result.flushed.length).toBe(1)
+      expect(result.flushed[0]?.scope.id).toBe('/tmp/repo-a')
+
+      db.close()
+    })
+  })
+
 })

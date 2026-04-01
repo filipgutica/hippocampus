@@ -1,3 +1,4 @@
+import type { ScopeType } from '../common/types/scope-ref.js'
 import type { PolicyDefinition } from './dto/get-policy.dto.js'
 import type { ApplyMemoryDecision } from './types/memory.types.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from './types/memory.types.js'
@@ -75,11 +76,11 @@ const originStrength: Record<MemoryOrigin, number> = {
   explicit_user_statement: 3,
 }
 
-export const MEMORY_POLICY_VERSION = '4'
+export const MEMORY_POLICY_VERSION = '5'
 export const REINFORCEMENT_CAP = 5
 export const CANDIDATE_PROMOTION_THRESHOLD = 3
-export const ACTIVE_ARCHIVE_STALE_AFTER_DAYS = 90
-export const CANDIDATE_ARCHIVE_STALE_AFTER_DAYS = 90
+export const ARCHIVE_STALE_AFTER_DAYS_USER = 90
+export const ARCHIVE_STALE_AFTER_DAYS_REPO = 365
 export const AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS = 24
 export const AUTO_ARCHIVE_SWEEP_LIMIT = 50
 export const RETRIEVAL_DECAY_RATE = 0.95
@@ -87,6 +88,7 @@ export const RETRIEVAL_BOOST_THRESHOLD = 3
 export const RETRIEVAL_BOOST_FACTOR = 1.1
 export const RETRIEVAL_STRENGTH_FLOOR = 1.0
 export const RETRIEVAL_STRENGTH_CAP = 5
+export const DEFAULT_MAINTENANCE_BATCH_SIZE = 100
 
 export const getInitialMemoryStatus = (origin: MemoryOrigin): MemoryStatus =>
   origin === 'observed_pattern' ? 'candidate' : 'active'
@@ -94,6 +96,9 @@ export const getInitialMemoryStatus = (origin: MemoryOrigin): MemoryStatus =>
 export const isLiveMemoryStatus = (status: MemoryStatus): boolean => status === 'candidate' || status === 'active'
 
 export const isRetrievableMemoryStatus = (status: MemoryStatus): boolean => status === 'active'
+
+export const getArchiveStaleDays = (scopeType: ScopeType): number =>
+  scopeType === 'repo' ? ARCHIVE_STALE_AFTER_DAYS_REPO : ARCHIVE_STALE_AFTER_DAYS_USER
 
 export const capReinforcementValue = (value: number): number => Math.min(value, REINFORCEMENT_CAP)
 

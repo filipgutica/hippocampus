@@ -14,14 +14,16 @@ import type { MemoryIdInput } from './dto/memory-id.dto.js'
 import type { SearchMatchMode, SearchMemoriesInput } from './dto/search-memories.dto.js'
 import { validateScope } from './memory-scope.policy.js'
 import {
-  ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
   AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS,
   AUTO_ARCHIVE_SWEEP_LIMIT,
+  DEFAULT_MAINTENANCE_BATCH_SIZE,
+  RETRIEVAL_STRENGTH_FLOOR,
   applyRetrievalAccess,
   capReinforcementValue,
   evaluateMemoryPolicy,
-  getInitialMemoryStatus,
   getEffectiveRetrievalStrength,
+  getArchiveStaleDays,
+  getInitialMemoryStatus,
   memoryOriginDefinitions,
   memoryTypeDefinitions,
   pickStrongerOrigin,
@@ -40,6 +42,8 @@ import type {
   MemoryGetResult,
   MemoryHistoryResult,
   MemoryListResult,
+  MaintenanceFlushEntry,
+  MaintenancePassResult,
   SearchResult,
 } from './models/memory-result.js'
 import type { MemoryRecord, ParsedMemoryEventRecord } from './models/memory-record.js'
@@ -49,7 +53,7 @@ import {
   runtimeMemoryPolicyResource,
   supportingGuidanceResources,
 } from '../guidance/guidance-catalog.js'
-import type { ScopeRef } from '../common/types/scope-ref.js'
+import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 
 type MemoryServiceDeps = {
   embeddingProvider: EmbeddingProvider
@@ -142,12 +146,16 @@ const toArchiveReason = ({
   olderThanDays,
   automatic,
 }: {
-  olderThanDays: number
+  olderThanDays: number | null
   automatic: boolean
 }): string =>
-  automatic
-    ? `Memory was archived automatically after ${olderThanDays} days without reinforcement.`
-    : `Memory was archived by operator sweep after ${olderThanDays} days without reinforcement.`
+  olderThanDays == null
+    ? automatic
+      ? 'Memory was archived automatically after exceeding the scope-aware staleness threshold for reinforcement and retrieval.'
+      : 'Memory was archived by operator sweep after exceeding the scope-aware staleness threshold for reinforcement and retrieval.'
+    : automatic
+      ? `Memory was archived automatically after ${olderThanDays} days without reinforcement or retrieval.`
+      : `Memory was archived by operator sweep after ${olderThanDays} days without reinforcement or retrieval.`
 
 const subtractDays = ({ timestamp, days }: { timestamp: string; days: number }): string => {
   const date = new Date(timestamp)
@@ -179,6 +187,10 @@ type ArchiveStaleMemoriesInput = {
   updateSweepTimestamp?: boolean
   deferSweepTimestampWhenTruncated?: boolean
 }
+
+type ScopeCutoffMap = Record<ScopeType, string>
+
+const scopeTypes: ScopeType[] = ['user', 'repo', 'org']
 
 const toParsedEvent = (event: {
   id: string
@@ -313,11 +325,10 @@ export class MemoryService {
     }
 
     this.archiveStaleMemories({
-      olderThanDays: ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
       dryRun: false,
       limit: AUTO_ARCHIVE_SWEEP_LIMIT,
       reason: toArchiveReason({
-        olderThanDays: ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
+        olderThanDays: null,
         automatic: true,
       }),
       source: null,
@@ -326,12 +337,99 @@ export class MemoryService {
     })
   }
 
-  archiveStaleMemories(input: ArchiveStaleMemoriesInput = {}): ArchiveStaleMemoriesResult {
-    const olderThanDays = ensurePositiveInteger({
-      value: input.olderThanDays ?? ACTIVE_ARCHIVE_STALE_AFTER_DAYS,
-      code: 'INVALID_OLDER_THAN_DAYS',
-      message: 'olderThanDays must be a positive integer.',
+  runMaintenance(input: {
+    scope?: ScopeRef | null
+    batchSize?: number | null
+    dryRun?: boolean
+  }): MaintenancePassResult {
+    const batchSize = ensurePositiveInteger({
+      value: input.batchSize ?? DEFAULT_MAINTENANCE_BATCH_SIZE,
+      code: 'INVALID_BATCH_SIZE',
+      message: 'batchSize must be a positive integer.',
     })
+    const dryRun = input.dryRun ?? false
+    const scope = input.scope ? canonicalizeScope(validateScope(input.scope)) : null
+    const now = new Date().toISOString()
+
+    const candidates = this.deps.memoryRepository.listForMaintenance({
+      scope,
+      floor: RETRIEVAL_STRENGTH_FLOOR,
+      limit: batchSize,
+    })
+
+    const flushed: MaintenanceFlushEntry[] = []
+    let unchanged = 0
+
+    const shouldFlushStrength = (stored: number, effective: number): boolean =>
+      // Flush when decay is meaningful OR when effective has hit the floor and the stored
+      // value is still above it — ensures near-floor rows are evicted from future batches.
+      effective - stored < -0.001 || (effective === RETRIEVAL_STRENGTH_FLOOR && stored > RETRIEVAL_STRENGTH_FLOOR)
+
+    if (dryRun) {
+      for (const memory of candidates) {
+        const effective = getEffectiveRetrievalStrength({
+          strength: memory.strength,
+          lastRetrievedAt: memory.lastRetrievedAt,
+          now,
+        })
+
+        if (shouldFlushStrength(memory.strength, effective)) {
+          flushed.push({
+            id: memory.id,
+            scope: memory.scope,
+            type: memory.type,
+            subject: memory.subject,
+            oldStrength: memory.strength,
+            newStrength: effective,
+          })
+        } else {
+          unchanged += 1
+        }
+      }
+    } else {
+      runTransaction(this.deps.db, () => {
+        for (const memory of candidates) {
+          const effective = getEffectiveRetrievalStrength({
+            strength: memory.strength,
+            lastRetrievedAt: memory.lastRetrievedAt,
+            now,
+          })
+
+          if (shouldFlushStrength(memory.strength, effective)) {
+            this.deps.memoryRepository.flushStrength({ id: memory.id, strength: effective, now })
+            flushed.push({
+              id: memory.id,
+              scope: memory.scope,
+              type: memory.type,
+              subject: memory.subject,
+              oldStrength: memory.strength,
+              newStrength: effective,
+            })
+          } else {
+            unchanged += 1
+          }
+        }
+      })
+    }
+
+    return {
+      dryRun,
+      batchSize,
+      flushed,
+      unchanged,
+      total: flushed.length + unchanged,
+    }
+  }
+
+  archiveStaleMemories(input: ArchiveStaleMemoriesInput = {}): ArchiveStaleMemoriesResult {
+    const olderThanDays =
+      input.olderThanDays == null
+        ? null
+        : ensurePositiveInteger({
+            value: input.olderThanDays,
+            code: 'INVALID_OLDER_THAN_DAYS',
+            message: 'olderThanDays must be a positive integer.',
+          })
     const dryRun = input.dryRun ?? false
     const limit =
       input.limit == null
@@ -342,10 +440,20 @@ export class MemoryService {
             message: 'Limit must be a positive integer.',
           })
     const now = new Date().toISOString()
-    const cutoffAt = subtractDays({
-      timestamp: now,
-      days: olderThanDays,
-    })
+    const cutoffByScope = scopeTypes.reduce<ScopeCutoffMap>(
+      (acc, scopeType) => {
+        acc[scopeType] = subtractDays({
+          timestamp: now,
+          days: olderThanDays ?? getArchiveStaleDays(scopeType),
+        })
+        return acc
+      },
+      {
+        user: now,
+        repo: now,
+        org: now,
+      },
+    )
     const reason =
       input.reason ??
       toArchiveReason({
@@ -357,14 +465,14 @@ export class MemoryService {
 
     if (dryRun) {
       const items = this.deps.memoryRepository.listStaleMemories({
-        cutoffAt,
+        cutoffByScope,
         limit,
       })
 
       return {
         dryRun,
         olderThanDays,
-        cutoffAt,
+        cutoffByScope,
         items,
         total: items.length,
       }
@@ -372,7 +480,7 @@ export class MemoryService {
 
     return runTransaction(this.deps.db, () => {
       const staleMemories = this.deps.memoryRepository.listStaleMemories({
-        cutoffAt,
+        cutoffByScope,
         limit: queryLimit,
       })
       const hasMoreStaleMemories = limit != null && staleMemories.length > limit
@@ -427,7 +535,7 @@ export class MemoryService {
       return {
         dryRun,
         olderThanDays,
-        cutoffAt,
+        cutoffByScope,
         items: archivedMemories,
         total: archivedMemories.length,
       }

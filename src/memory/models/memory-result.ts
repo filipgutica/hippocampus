@@ -2,6 +2,8 @@ import type { GetPolicyResult } from '../dto/get-policy.dto.js'
 import type { ApplyMemoryDecision } from '../types/memory.types.js'
 import type { SearchMatchMode } from '../dto/search-memories.dto.js'
 import type { MemoryGetResult, MemoryRecord, ParsedMemoryEventRecord } from './memory-record.js'
+import type { ScopeRef, ScopeType } from '../../common/types/scope-ref.js'
+import type { MemoryType } from '../types/memory.types.js'
 
 export type ApplyMemoryResult =
   | ApplyMemoryDecision
@@ -24,8 +26,8 @@ export type MemoryListResult = {
 
 export type ArchiveStaleMemoriesResult = {
   dryRun: boolean
-  olderThanDays: number
-  cutoffAt: string
+  olderThanDays: number | null
+  cutoffByScope: Record<ScopeType, string>
   items: MemoryRecord[]
   total: number
 }
@@ -45,6 +47,23 @@ export type ContradictMemoryResult = {
   replacementMemory: MemoryRecord
   contradictedEvent: ParsedMemoryEventRecord
   replacementEvent: ParsedMemoryEventRecord
+}
+
+export type MaintenanceFlushEntry = {
+  id: string
+  scope: ScopeRef
+  type: MemoryType
+  subject: string
+  oldStrength: number
+  newStrength: number
+}
+
+export type MaintenancePassResult = {
+  dryRun: boolean
+  batchSize: number
+  flushed: MaintenanceFlushEntry[]
+  unchanged: number
+  total: number
 }
 
 export type { MemoryGetResult }

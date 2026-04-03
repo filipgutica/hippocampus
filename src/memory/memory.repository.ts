@@ -226,6 +226,64 @@ export class MemoryRepository {
     return rows.map(toRecord)
   }
 
+  listFtsCandidates(input: {
+    scope: ScopeRef
+    type?: MemoryType | null
+    query: string
+  }): MemoryRecord[] {
+    const clauses = [
+      'm.scope_type = ?',
+      'm.scope_id = ?',
+      "m.status = 'active'",
+    ]
+    const params: Array<string> = [input.query, input.scope.type, input.scope.id]
+
+    if (input.type) {
+      clauses.push('m.memory_type = ?')
+      params.push(input.type)
+    }
+
+    const rows = this.db
+      .prepare(
+        `
+          SELECT m.*, bm25(memories_fts) AS rank
+          FROM memories_fts
+          JOIN memories m ON memories_fts.rowid = m.rowid
+          WHERE memories_fts MATCH ?
+            AND ${clauses.join(' AND ')}
+          ORDER BY rank
+        `,
+      )
+      .all(...params) as MemoryRow[]
+
+    return rows.map(toRecord)
+  }
+
+  countActive(input: {
+    scope: ScopeRef
+    type?: MemoryType | null
+  }): number {
+    const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
+    const params: Array<string> = [input.scope.type, input.scope.id]
+
+    if (input.type) {
+      clauses.push('memory_type = ?')
+      params.push(input.type)
+    }
+
+    const row = this.db
+      .prepare(
+        `
+          SELECT COUNT(*) AS total
+          FROM memories
+          WHERE ${clauses.join(' AND ')}
+        `,
+      )
+      .get(...params) as { total: number } | undefined
+
+    return row?.total ?? 0
+  }
+
   list(input: {
     scope: ScopeRef
     type?: MemoryType | null

@@ -6,6 +6,18 @@ type Migration = {
   up: string
 }
 
+const assertFts5Available = (db: InstanceType<typeof Database>): void => {
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE temp.fts5_probe USING fts5(content);
+      DROP TABLE temp.fts5_probe;
+    `)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown error'
+    throw new Error(`SQLite FTS5 is required for memory search indexing. ${message}`)
+  }
+}
+
 export const migrations: Migration[] = [
   {
     version: 1,
@@ -97,10 +109,51 @@ export const migrations: Migration[] = [
         ON memory_embeddings(model_id, updated_at DESC);
     `,
   },
+  {
+    version: 2,
+    name: 'memory_fts5_index',
+    up: `
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+      USING fts5(
+        subject,
+        statement,
+        details,
+        content='memories',
+        content_rowid='rowid'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS memories_fts_ai
+      AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, subject, statement, details)
+        VALUES (new.rowid, new.subject, new.statement, new.details);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS memories_fts_ad
+      AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, subject, statement, details)
+        VALUES ('delete', old.rowid, old.subject, old.statement, old.details);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS memories_fts_au
+      AFTER UPDATE ON memories
+      WHEN old.subject IS NOT new.subject
+        OR old.statement IS NOT new.statement
+        OR old.details IS NOT new.details
+      BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, subject, statement, details)
+        VALUES ('delete', old.rowid, old.subject, old.statement, old.details);
+        INSERT INTO memories_fts(rowid, subject, statement, details)
+        VALUES (new.rowid, new.subject, new.statement, new.details);
+      END;
+
+      INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+    `,
+  },
 ]
 
 export const runMigrations = (db: InstanceType<typeof Database>): void => {
   db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);')
+  assertFts5Available(db)
 
   const applied = new Set<number>(
     (db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>).map(

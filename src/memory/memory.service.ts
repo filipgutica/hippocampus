@@ -573,6 +573,42 @@ export class MemoryService {
   private async searchBySemanticSimilarity(input: {
     scope: ScopeRef
     type: MemoryType | null
+    query: string
+    queryEmbedding: number[]
+    now: string
+  }): Promise<MemoryRecord[]> {
+    try {
+      const candidates = this.deps.memoryRepository.listFtsCandidates({
+        scope: input.scope,
+        type: input.type,
+        query: input.query,
+      })
+      if (candidates.length === 0) {
+        return this.searchBySemanticSimilarityFromFullScan(input)
+      }
+
+      const activeCount = this.deps.memoryRepository.countActive({
+        scope: input.scope,
+        type: input.type,
+      })
+
+      if (candidates.length === activeCount) {
+        return this.scoreSemanticCandidates({
+          candidates,
+          queryEmbedding: input.queryEmbedding,
+          now: input.now,
+        })
+      }
+    } catch {
+      // Fall through to the exhaustive scan.
+    }
+
+    return this.searchBySemanticSimilarityFromFullScan(input)
+  }
+
+  private async searchBySemanticSimilarityFromFullScan(input: {
+    scope: ScopeRef
+    type: MemoryType | null
     queryEmbedding: number[]
     now: string
   }): Promise<MemoryRecord[]> {
@@ -586,12 +622,24 @@ export class MemoryService {
       return []
     }
 
+    return this.scoreSemanticCandidates({
+      candidates,
+      queryEmbedding: input.queryEmbedding,
+      now: input.now,
+    })
+  }
+
+  private async scoreSemanticCandidates(input: {
+    candidates: MemoryRecord[]
+    queryEmbedding: number[]
+    now: string
+  }): Promise<MemoryRecord[]> {
     const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
     const embeddings = await Promise.all(
-      candidates.map(candidate => this.ensureMemoryEmbedding(candidate, modelFingerprint)),
+      input.candidates.map(candidate => this.ensureMemoryEmbedding(candidate, modelFingerprint)),
     )
 
-    const scored: ScoredMemory[] = candidates
+    const scored: ScoredMemory[] = input.candidates
       .map((memory, i) => ({ memory, score: cosineSimilarity(input.queryEmbedding, embeddings[i]) }))
       .filter(item => item.score >= SEMANTIC_MIN_SCORE)
 
@@ -604,6 +652,19 @@ export class MemoryService {
         }),
       )
       .map(item => item.memory)
+  }
+
+  private scheduleEagerEmbedding(memory: MemoryRecord): void {
+    globalThis.queueMicrotask(() => {
+      void (async () => {
+        try {
+          const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
+          await this.ensureMemoryEmbedding(memory, modelFingerprint)
+        } catch {
+          // Best-effort cache warming only.
+        }
+      })()
+    })
   }
 
   private getExactSearchItems(input: {
@@ -670,7 +731,7 @@ export class MemoryService {
       existingMemory: existing !== null,
     })
 
-    return runTransaction(this.deps.db, () => {
+    const result: ApplyMemoryResult = runTransaction(this.deps.db, () => {
       if (decision.decision === 'reject') {
         this.deps.memoryEventRepository.insert({
           eventType: 'rejected',
@@ -714,7 +775,7 @@ export class MemoryService {
         })
 
         return {
-          decision: 'create',
+          decision: 'create' as const,
           reason: decision.reason,
           policyVersion: decision.policyVersion,
           memory,
@@ -753,12 +814,18 @@ export class MemoryService {
       })
 
       return {
-        decision: 'reinforce',
+        decision: 'reinforce' as const,
         reason: decision.reason,
         policyVersion: decision.policyVersion,
         memory,
       }
     })
+
+    if ('memory' in result) {
+      this.scheduleEagerEmbedding(result.memory)
+    }
+
+    return result
   }
 
   async searchMemories(input: SearchMemoriesInput): Promise<SearchResult> {
@@ -832,6 +899,7 @@ export class MemoryService {
     const semanticItems = await this.searchBySemanticSimilarity({
       scope,
       type,
+      query: semanticQuery,
       queryEmbedding,
       now,
     })

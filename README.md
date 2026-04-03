@@ -8,7 +8,7 @@ Hippocampus currently supports:
 
 - explicit init and lazy init on MCP startup
 - structured memory capture through CLI and MCP
-- explicit memory classification with `sourceType`
+- explicit memory classification with `type` and `origin`
 - scoped memory search
 - bounded automatic archival of stale memories
 - memory inspection and history
@@ -83,7 +83,7 @@ Note:
 - CLI delete is kept for operator/debug workflows
 - no extra retrieval tool is exposed in v1; `memory-search` remains the query-based retrieval primitive
 - `memory-search` requires `subject` and uses hybrid retrieval by default
-- `memory-list` is the broad recall path for `scope + kind`
+- `memory-list` is the broad recall path for `scope + type`
 
 Policy discovery flow:
 
@@ -144,7 +144,7 @@ Inspect the SQLite database directly if needed:
 
 ```bash
 sqlite3 /tmp/hippo-dev/hippocampus.db ".tables"
-sqlite3 /tmp/hippo-dev/hippocampus.db "select id, kind, source_type, subject, status, superseded_by from memories;"
+sqlite3 /tmp/hippo-dev/hippocampus.db "select id, memory_type as type, origin, subject, status, superseded_by from memories;"
 ```
 
 ## Local CLI Examples
@@ -155,8 +155,8 @@ Apply a memory:
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js apply \
   --scope-type repo \
   --scope-id /tmp/example-repo \
-  --kind preference \
-  --source-type tool_observation \
+  --type preference \
+  --origin tool_observation \
   --subject "Prefer pnpm" \
   --statement "Use pnpm for this repo."
 ```
@@ -173,12 +173,12 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js search \
   --json
 ```
 
-Use `memory-list` for broader recall by class of memory, for example `scope + kind = preference`.
+Use `memory-list` for broader recall by class of memory, for example `scope + type = preference`.
 
 Fields to expect on stored memories:
 
-- `sourceType`: why the memory exists: `explicit_user_statement`, `observed_pattern`, or `tool_observation`
-- `kind`: free-form string; prefer stable values like `preference`, `convention`, `workflow`, `project-fact`, or `tooling`
+- `origin`: why the memory exists: `explicit_user_statement`, `observed_pattern`, or `tool_observation`
+- `type`: free-form string; prefer stable values like `preference`, `convention`, `workflow`, `project-fact`, or `tooling`
 - `status`: lifecycle state: `candidate`, `active`, `suppressed`, `archived`, or `deleted`
 - `supersededBy`: id of the direct replacement memory when a memory has been contradicted
 - `lastReinforcedAt`: when the memory was last reaffirmed by write-side evidence
@@ -191,7 +191,7 @@ Current retrieval behavior:
 - `memory-search` requires `subject` and uses hybrid retrieval by default
 - `memory-search` degrades to exact results if semantic retrieval is unavailable
 - `memory-search` updates retrieval-side salience for returned top-N memories only
-- `memory-list` is the broad recall path for `scope + kind`
+- `memory-list` is the broad recall path for `scope + type`
 - `memory-list`, `memory-get`, and `memory-get-history` stay retrieval-neutral
 - retrieval `strength` decays over time from `lastRetrievedAt` and is used only as a search tie-break, not as evidence
 - a `candidate` memory promotes to `active` after enough reinforcement

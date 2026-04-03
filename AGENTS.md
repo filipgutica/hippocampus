@@ -48,4 +48,5 @@ Hippocampus is a local-first memory runtime for coding agents. The current syste
 - Keep the README product-facing and usage-oriented.
 - Update the README whenever behavior, commands, installation steps, or local development flow changes.
 - Keep the README `Next` section current so it is easy to see what the next active area of work is.
+- Use the `notes/` directory for short agent-facing notes about memory, future work, and architecture brainstorming that should be easy to revisit later.
 - Keep this file concise. Do not duplicate details that are obvious from the code layout.

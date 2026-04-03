@@ -22,8 +22,15 @@ const createTempDir = (): string => {
   return dir
 }
 
+const flushAsyncWork = async (ticks = 3): Promise<void> => {
+  for (let index = 0; index < ticks; index += 1) {
+    await Promise.resolve()
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
 
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -37,6 +44,7 @@ const createService = (options?: {
   const dbFile = path.join(dir, 'hippocampus.db')
   const db = initializeDatabase(dbFile)
   const memoryRuntimeStateRepository = new MemoryRuntimeStateRepository(db)
+  const memoryRepository = new MemoryRepository(db)
   const embeddingProvider =
     options?.embeddingProvider ??
     {
@@ -78,12 +86,13 @@ const createService = (options?: {
     service: new MemoryService({
       embeddingProvider,
       memoryEmbeddingRepository: new MemoryEmbeddingRepository(db),
-      memoryRepository: new MemoryRepository(db),
+      memoryRepository,
       memoryEventRepository: new MemoryEventRepository(db),
       memoryRuntimeStateRepository,
       policyVersion: MEMORY_POLICY_VERSION,
       db,
     }),
+    memoryRepository,
   }
 }
 
@@ -816,6 +825,335 @@ describe('MemoryService', () => {
     expect(before.model_fingerprint).toBe('fingerprint-a')
     expect(after.model_fingerprint).toBe('fingerprint-b')
     expect(before.embedding_json).not.toBe(after.embedding_json)
+
+    db.close()
+  })
+
+  it('eagerly embeds memories after create commits', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    await flushAsyncWork()
+
+    const stored = db
+      .prepare('SELECT model_id, source_text_hash FROM memory_embeddings WHERE memory_id = ?')
+      .get(created.memory.id) as { model_id: string; source_text_hash: string } | undefined
+
+    expect(stored?.model_id).toBe('Xenova/bge-small-en-v1.5')
+    expect(stored?.source_text_hash).toBe(getSourceTextHash(getSemanticSourceText(created.memory)))
+
+    db.close()
+  })
+
+  it('refreshes eager embeddings after a reinforce changes the text', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    await flushAsyncWork()
+
+    const reinforced = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm and keep the lockfile committed.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (reinforced.decision !== 'reinforce' || !('memory' in reinforced)) {
+      throw new Error('Expected memory reinforcement.')
+    }
+
+    await flushAsyncWork()
+
+    const stored = db
+      .prepare('SELECT source_text_hash FROM memory_embeddings WHERE memory_id = ?')
+      .get(created.memory.id) as { source_text_hash: string } | undefined
+
+    expect(stored?.source_text_hash).toBe(getSourceTextHash(getSemanticSourceText(reinforced.memory)))
+
+    db.close()
+  })
+
+  it('swallows eager embedding failures after writes commit', async () => {
+    const { db, service } = createService({
+      embeddingProvider: {
+        getModelId: () => 'Xenova/bge-small-en-v1.5',
+        getCacheDir: () => '/tmp/fake-cache',
+        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
+        getModelFingerprint: async () => {
+          throw new Error('model unavailable')
+        },
+        embed: async () => [0, 0, 1],
+      },
+    })
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    expect(created.decision).toBe('create')
+    await flushAsyncWork()
+
+    db.close()
+  })
+
+  it('falls back to the full scan when FTS is only a partial match, preserving semantic recall', async () => {
+    const { db, service, memoryRepository } = createService({
+      embeddingProvider: {
+        getModelId: () => 'Xenova/bge-small-en-v1.5',
+        getCacheDir: () => '/tmp/fake-cache',
+        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
+        getModelFingerprint: async () => 'semantic-fingerprint',
+        embed: async (input: string) => {
+          const lower = input.toLowerCase()
+
+          if (lower === 'quality') {
+            return [1, 0, 0]
+          }
+
+          if (lower.includes('quality note') || lower.includes('track quality metrics')) {
+            return [0, 1, 0]
+          }
+
+          if (lower.includes('run tests before commit')) {
+            return [1, 0, 0]
+          }
+
+          return [0, 0, 1]
+        },
+      },
+    })
+    const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
+    const listSpy = vi.spyOn(memoryRepository, 'list')
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'quality note',
+      statement: 'Track quality metrics.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    service.applyObservation({
+      scope,
+      type: 'procedural',
+      subject: 'run tests before commit',
+      statement: 'Run tests before commit.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    await flushAsyncWork()
+
+    const search = await service.searchMemories({
+      scope,
+      subject: 'quality',
+      limit: 10,
+    })
+
+    expect(listFtsCandidatesSpy).toHaveBeenCalled()
+    expect(listSpy).toHaveBeenCalled()
+    expect(search.total).toBe(1)
+    expect(search.items[0]?.subject).toBe('run tests before commit')
+
+    db.close()
+  })
+
+  it('falls back to the full scan when FTS returns no candidates', async () => {
+    const { db, service, memoryRepository } = createService()
+    const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
+    const listSpy = vi.spyOn(memoryRepository, 'list')
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    await flushAsyncWork()
+
+    const search = await service.searchMemories({
+      scope,
+      subject: 'unrelated search token',
+      limit: 10,
+    })
+
+    expect(listFtsCandidatesSpy).toHaveBeenCalled()
+    expect(listSpy).toHaveBeenCalled()
+    expect(search.total).toBe(0)
+
+    db.close()
+  })
+
+  it('falls back to the full scan when FTS query parsing fails', async () => {
+    const { db, service, memoryRepository } = createService()
+    const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
+    const listSpy = vi.spyOn(memoryRepository, 'list')
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    await flushAsyncWork()
+
+    const search = await service.searchMemories({
+      scope,
+      subject: 'foo OR',
+      limit: 10,
+    })
+
+    expect(listFtsCandidatesSpy).toHaveBeenCalled()
+    expect(listSpy).toHaveBeenCalled()
+    expect(search.total).toBe(0)
+
+    db.close()
+  })
+
+  it('keeps archived memories out of the FTS-backed search results', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'preferred package manager',
+      statement: 'Prefer pnpm for package manager decisions.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    await flushAsyncWork()
+
+    db.prepare('UPDATE memories SET status = ?, updated_at = ? WHERE id = ?').run(
+      'archived',
+      new Date().toISOString(),
+      created.memory.id,
+    )
+
+    const search = await service.searchMemories({
+      scope,
+      subject: 'package manager',
+      limit: 10,
+    })
+
+    expect(search.total).toBe(0)
+    expect(service.getMemory({ id: created.memory.id }).status).toBe('archived')
+
+    db.close()
+  })
+
+  it('does not churn the FTS index when search updates retrieval state', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    await flushAsyncWork()
+
+    const before = db.prepare('SELECT total_changes() AS total_changes').get() as { total_changes: number }
+
+    const search = await service.searchMemories({
+      scope,
+      subject: 'prefer pnpm',
+      matchMode: 'exact',
+      limit: 10,
+    })
+
+    const after = db.prepare('SELECT total_changes() AS total_changes').get() as { total_changes: number }
+
+    expect(search.total).toBe(1)
+    expect(after.total_changes - before.total_changes).toBe(1)
+
+    db.close()
+  })
+
+  it('returns broad FTS matches without a candidate cap', async () => {
+    const { db, service, memoryRepository } = createService()
+    const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
+    const listSpy = vi.spyOn(memoryRepository, 'list')
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+
+    for (let index = 0; index < 201; index += 1) {
+      service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: `shared term ${index}`,
+        statement: `Shared term ${index}.`,
+        origin: 'explicit_user_statement',
+        source: { channel: 'cli' },
+      })
+    }
+
+    await flushAsyncWork(4)
+
+    const search = await service.searchMemories({
+      scope,
+      subject: 'shared term',
+      limit: 500,
+    })
+
+    expect(listFtsCandidatesSpy).toHaveBeenCalled()
+    expect(listSpy).not.toHaveBeenCalled()
+    expect(search.total).toBe(201)
 
     db.close()
   })

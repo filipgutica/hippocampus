@@ -12,7 +12,7 @@ import type { GetPolicyResult } from './dto/get-policy.dto.js'
 import type { ListMemoriesInput } from './dto/list-memories.dto.js'
 import type { MemoryIdInput } from './dto/memory-id.dto.js'
 import type { SearchMatchMode, SearchMemoriesInput } from './dto/search-memories.dto.js'
-import { validateScope } from './memory-scope.policy.js'
+import { validateScope } from './policies/memory-scope.policy.js'
 import {
   AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS,
   AUTO_ARCHIVE_SWEEP_LIMIT,
@@ -28,8 +28,8 @@ import {
   memoryTypeDefinitions,
   pickStrongerOrigin,
   resolveReinforcedStatus,
-} from './memory.policy.js'
-import { compareMemoryRank, rankMemories } from './memory-ranking.policy.js'
+} from './policies/memory.policy.js'
+import { compareMemoryRank, rankMemories } from './policies/memory-ranking.policy.js'
 import { MemoryRepository } from './memory.repository.js'
 import { MemoryEventRepository } from './memory-event.repository.js'
 import { MemoryRuntimeStateRepository } from './memory-runtime-state.repository.js'
@@ -46,8 +46,9 @@ import type {
   MaintenancePassResult,
   SearchResult,
 } from './models/memory-result.js'
-import type { MemoryRecord, ParsedMemoryEventRecord } from './models/memory-record.js'
-import type { MemoryOrigin, MemoryType } from './types/memory.types.js'
+import type { ParsedMemoryEventRecord } from './models/memory-event-record.js'
+import type { MemoryRecord } from './models/memory-record.js'
+import type { MemoryOrigin, MemoryType } from './memory.types.js'
 import type Database from 'better-sqlite3'
 import {
   runtimeMemoryPolicyResource,

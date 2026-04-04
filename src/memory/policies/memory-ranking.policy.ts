@@ -1,4 +1,4 @@
-import type { MemoryRecord } from './models/memory-record.js'
+import type { MemoryRecord } from '../models/memory-record.js'
 
 /**
  * Orders two memories by reinforcement first, then recency, then subject text for stable ties.

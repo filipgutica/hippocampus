@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import type { MemoryRecord } from './models/memory-record.js'
-import type { MemoryOrigin, MemoryStatus, MemoryType } from './types/memory.types.js'
+import type { MemoryOrigin, MemoryStatus, MemoryType } from './memory.types.js'
 
 type MemoryRow = {
   id: string

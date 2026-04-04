@@ -7,7 +7,7 @@ import { MemoryRepository } from '../memory/memory.repository.js'
 import { MemoryEventRepository } from '../memory/memory-event.repository.js'
 import { MemoryRuntimeStateRepository } from '../memory/memory-runtime-state.repository.js'
 import { LocalEmbeddingProvider } from '../memory/local-embedding-provider.js'
-import { MEMORY_POLICY_VERSION } from '../memory/memory.policy.js'
+import { MEMORY_POLICY_VERSION } from '../memory/policies/memory.policy.js'
 import { MemoryService } from '../memory/memory.service.js'
 import { createMcpServer } from '../mcp/server.js'
 

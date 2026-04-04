@@ -1,9 +1,13 @@
 import type { GetPolicyResult } from '../dto/get-policy.dto.js'
-import type { ApplyMemoryDecision } from '../types/memory.types.js'
 import type { SearchMatchMode } from '../dto/search-memories.dto.js'
-import type { MemoryGetResult, MemoryRecord, ParsedMemoryEventRecord } from './memory-record.js'
 import type { ScopeRef, ScopeType } from '../../common/types/scope-ref.js'
-import type { MemoryType } from '../types/memory.types.js'
+import type { ApplyMemoryDecision, MemoryType } from '../memory.types.js'
+import type { MemoryRecord } from './memory-record.js'
+import type { ParsedMemoryEventRecord } from './memory-event-record.js'
+
+export type MemoryGetResult = MemoryRecord & {
+  supersededByMemory: MemoryRecord | null
+}
 
 export type ApplyMemoryResult =
   | ApplyMemoryDecision
@@ -65,7 +69,5 @@ export type MaintenancePassResult = {
   unchanged: number
   total: number
 }
-
-export type { MemoryGetResult }
 
 export type { GetPolicyResult }

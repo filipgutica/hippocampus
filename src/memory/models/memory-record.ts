@@ -1,6 +1,5 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
-import type { ApplyObservationInput, ObservationSource } from '../dto/apply-observation.dto.js'
-import type { MemoryEventType, MemoryOrigin, MemoryStatus, MemoryType } from '../types/memory.types.js'
+import type { MemoryOrigin, MemoryStatus, MemoryType } from '../memory.types.js'
 
 export type MemoryRecord = {
   id: string
@@ -22,26 +21,4 @@ export type MemoryRecord = {
   status: MemoryStatus
   supersededBy: string | null
   deletedAt: string | null
-}
-
-export type MemoryGetResult = MemoryRecord & {
-  supersededByMemory: MemoryRecord | null
-}
-
-export type MemoryEventRecord = {
-  id: string
-  memoryId: string | null
-  eventType: MemoryEventType
-  scope: ScopeRef
-  type: MemoryType
-  subjectKey: string
-  observationJson: string
-  sourceJson: string | null
-  reason: string
-  createdAt: string
-}
-
-export type ParsedMemoryEventRecord = Omit<MemoryEventRecord, 'observationJson' | 'sourceJson'> & {
-  observation: ApplyObservationInput | null
-  source: ObservationSource | null
 }

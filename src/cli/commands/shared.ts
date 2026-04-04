@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { resolveRepoScopeId } from '../../repos/types.js'
+import { resolveRepoScopeId } from '../../repos/repo-scope.js'
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../../memory/dto/apply-observation.dto.js'
 import type { InitResult } from '../../app/init.service.js'
@@ -13,7 +13,8 @@ import type {
   SearchResult,
 } from '../../memory/models/memory-result.js'
 import type { GetPolicyResult } from '../../memory/dto/get-policy.dto.js'
-import type { MemoryGetResult, MemoryRecord } from '../../memory/models/memory-record.js'
+import type { MemoryRecord } from '../../memory/models/memory-record.js'
+import type { MemoryGetResult } from '../../memory/models/memory-result.js'
 
 export type CliResult = {
   code: number

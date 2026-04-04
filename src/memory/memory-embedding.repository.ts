@@ -1,13 +1,5 @@
 import type Database from 'better-sqlite3'
-
-export type MemoryEmbeddingRecord = {
-  memoryId: string
-  modelId: string
-  modelFingerprint: string
-  embeddingJson: string
-  sourceTextHash: string
-  updatedAt: string
-}
+import type { MemoryEmbeddingRecord } from './models/memory-embedding-record.js'
 
 type MemoryEmbeddingRow = {
   memory_id: string

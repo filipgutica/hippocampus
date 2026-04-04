@@ -1,5 +1,5 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
-import type { MemoryOrigin, MemoryType } from '../types/memory.types.js'
+import type { MemoryOrigin, MemoryType } from '../memory.types.js'
 
 export type ObservationSource = {
   channel: 'cli' | 'mcp'

@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { normalizeWhitespace } from '../../common/utils.js'
 import type { MemoryService } from '../../memory/memory.service.js'
-import { MEMORY_ORIGINS, MEMORY_TYPES } from '../../memory/types/memory.types.js'
+import { MEMORY_ORIGINS, MEMORY_TYPES } from '../../memory/memory.types.js'
 import { mcpScopeSchema } from './scope.schema.js'
 
 export const registerMemoryContradictTool = (server: McpServer, memoryService: MemoryService): void => {

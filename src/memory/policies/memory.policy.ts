@@ -1,7 +1,6 @@
-import type { ScopeType } from '../common/types/scope-ref.js'
-import type { PolicyDefinition } from './dto/get-policy.dto.js'
-import type { ApplyMemoryDecision } from './types/memory.types.js'
-import type { MemoryOrigin, MemoryStatus, MemoryType } from './types/memory.types.js'
+import type { ScopeType } from '../../common/types/scope-ref.js'
+import type { PolicyDefinition } from '../dto/get-policy.dto.js'
+import type { ApplyMemoryDecision, MemoryOrigin, MemoryStatus, MemoryType } from '../memory.types.js'
 
 export type MemoryPolicyContext = {
   policyVersion: string

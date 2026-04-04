@@ -13,7 +13,7 @@ hippocampus/
 │   ├── app/               # App container factory and initialisation
 │   ├── cli/               # CLI command handlers and setup tooling
 │   ├── mcp/               # MCP server, tools, and resources
-│   ├── memory/            # Core memory domain: service, repositories, policy, search
+│   ├── memory/            # Core memory domain: service, repositories, models, policies, search
 │   ├── common/            # Database init, migrations, shared utilities
 │   ├── guidance/          # Guidance catalog (policy + scope skill)
 │   └── repos/             # Repo scope resolution helpers
@@ -191,7 +191,7 @@ Retrieval side-effect: `retrieval_count` is incremented and `strength` is booste
 
 ## Key policy constants
 
-Defined in `src/memory/memory.policy.ts`:
+Defined in `src/memory/policies/memory.policy.ts`:
 
 | Constant | Value | Meaning |
 |---|---|---|

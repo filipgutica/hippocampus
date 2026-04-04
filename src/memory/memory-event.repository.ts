@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput, ObservationSource } from './dto/apply-observation.dto.js'
-import type { MemoryEventRecord } from './models/memory-record.js'
-import type { MemoryEventType, MemoryType } from './types/memory.types.js'
+import type { MemoryEventRecord } from './models/memory-event-record.js'
+import type { MemoryEventType, MemoryType } from './memory.types.js'
 
 type EventInsertInput = {
   memoryId?: string | null

@@ -1,5 +1,5 @@
-import { AppError } from '../common/errors.js'
-import type { ScopeRef } from '../common/types/scope-ref.js'
+import { AppError } from '../../common/errors.js'
+import type { ScopeRef } from '../../common/types/scope-ref.js'
 
 export const validateScope = (scope: ScopeRef): ScopeRef => {
   if (!scope.type || !['user', 'repo', 'org'].includes(scope.type)) {

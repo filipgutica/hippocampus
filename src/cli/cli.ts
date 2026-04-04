@@ -19,11 +19,16 @@ import { runMemoriesListCommand } from './commands/memories-list.command.js'
 import { runSearchCommand } from './commands/search.command.js'
 import { runSetupClaudeCommand, runSetupCodexCommand, runSetupShellCommand } from './commands/setup.command.js'
 import {
+  listTrackedShellRcFiles,
+  runManagedUninstallCommand,
   runUninstallClaudeCommand,
   runUninstallCodexCommand,
+  type UninstallMode,
+  type UninstallTarget,
   runUninstallShellCommand,
 } from './commands/uninstall.command.js'
 import { readJsonInput, resolveObservationSource, writeOutput, type CliIO, type CliResult } from './commands/shared.js'
+import { isInteractiveIo, promptCheckbox, promptConfirm, promptInput, promptSelect } from './interactive.js'
 
 type JsonOption = {
   json?: boolean
@@ -52,6 +57,14 @@ type SearchArgs = ScopeArgs &
     limit?: number
     matchMode?: SearchMatchMode
   }
+
+type UninstallArgs = {
+  target?: UninstallTarget
+  rcFile?: string
+  dryRun?: boolean
+  yes?: boolean
+  mode?: UninstallMode
+}
 
 // eslint-disable-next-line no-unused-vars
 type RuntimeAppHandler = (app: RuntimeApp) => Promise<CliResult>
@@ -94,6 +107,96 @@ const loadApplyInput = (args: ApplyArgs, argv: string[]): ApplyObservationInput 
     origin: parsedInput.origin ?? args.origin ?? ('' as MemoryOrigin),
     details: parsedInput.details ?? args.details ?? null,
     source: resolveObservationSource(parsedInput) ?? { channel: 'cli' },
+  }
+}
+
+const confirmDestructiveAction = async ({
+  io,
+  enabled,
+  message,
+}: {
+  io: CliIO
+  enabled: boolean
+  message: string
+}): Promise<void> => {
+  if (!enabled) {
+    return
+  }
+
+  const confirmed = await promptConfirm({
+    io,
+    message,
+    defaultValue: false,
+  })
+
+  if (!confirmed) {
+    throw new Error('Operation cancelled.')
+  }
+}
+
+const resolveInteractiveUninstall = async ({
+  args,
+  io,
+}: {
+  args: UninstallArgs
+  io: CliIO
+}): Promise<{ mode: UninstallMode; targets: UninstallTarget[] }> => {
+  const trackedShellRcFiles = listTrackedShellRcFiles()
+  const mode =
+    args.mode ??
+    (await promptSelect<UninstallMode>({
+      io,
+      message: 'What should uninstall remove?',
+      choices: [
+        {
+          value: 'full-wipe',
+          name: 'full-wipe',
+          description: 'Remove all installer-managed integrations and the Hippocampus home directory.',
+        },
+        {
+          value: 'mcp-hooks-only',
+          name: 'mcp/hooks only',
+          description: 'Remove installer-managed client hooks, MCP registrations, and tracked shell PATH blocks.',
+        },
+      ],
+    }))
+
+  if (mode === 'full-wipe') {
+    return {
+      mode,
+      targets: ['claude', 'codex', ...(trackedShellRcFiles.length > 0 ? (['shell'] as const) : [])],
+    }
+  }
+
+  const targets = await promptCheckbox<UninstallTarget>({
+    io,
+    message: 'Which integrations should be removed?',
+    choices: [
+      {
+        value: 'claude',
+        name: 'claude',
+        description: 'Remove Claude hooks, generated script, and installer-owned MCP registration.',
+      },
+      {
+        value: 'codex',
+        name: 'codex',
+        description: 'Remove Codex hooks, generated script, and installer-owned MCP registration.',
+      },
+      ...(trackedShellRcFiles.length > 0
+        ? [
+            {
+              value: 'shell' as const,
+              name: 'shell',
+              description: `Remove tracked PATH blocks from ${trackedShellRcFiles.length} shell rc file(s).`,
+            },
+          ]
+        : []),
+    ],
+  })
+
+  return {
+    mode,
+    targets,
   }
 }
 
@@ -296,7 +399,7 @@ const createParser = (argv: string[], io: CliIO) => {
       },
     })
     .command({
-      command: 'uninstall <target> [rc-file]',
+      command: 'uninstall [target] [rc-file]',
       describe: 'Remove proactive memory bootstrap wiring or local shell PATH setup.',
       builder: parser =>
         parser
@@ -310,26 +413,93 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('dry-run', {
             type: 'boolean',
             default: false,
+          })
+          .option('mode', {
+            type: 'string',
+            choices: ['mcp-hooks-only', 'full-wipe'] as const,
+          })
+          .option('yes', {
+            type: 'boolean',
+            default: false,
           }),
       handler: async args => {
-        const target = args.target as 'claude' | 'codex' | 'shell'
+        const uninstallArgs = args as unknown as UninstallArgs
+        const interactive = isInteractiveIo({ io })
         const options = {
-          dryRun: Boolean(args.dryRun),
+          dryRun: Boolean(uninstallArgs.dryRun),
         }
 
-        if (target === 'shell') {
-          if (typeof args.rcFile !== 'string' || args.rcFile.length === 0) {
-            throw new Error('uninstall shell requires <rc-file>.')
+        if (uninstallArgs.mode === 'full-wipe') {
+          if (uninstallArgs.target) {
+            throw new Error('`hippo uninstall --mode full-wipe` is global. Omit <target>.')
           }
 
-          result = runUninstallShellCommand(io, {
+          await confirmDestructiveAction({
+            io,
+            enabled: interactive && !options.dryRun && !uninstallArgs.yes,
+            message: `Delete all installer-managed integrations and remove ${process.env.HIPPOCAMPUS_HOME ?? '~/.hippocampus'}?`,
+          })
+
+          result = runManagedUninstallCommand(io, {
             ...options,
-            rcFilePath: args.rcFile,
+            mode: 'full-wipe',
+            targets: ['claude', 'codex', ...(listTrackedShellRcFiles().length > 0 ? (['shell'] as const) : [])],
           })
           return
         }
 
-        if (target === 'claude') {
+        if (!uninstallArgs.target) {
+          if (!interactive) {
+            throw new Error('uninstall requires <target> outside an interactive terminal.')
+          }
+
+          const selection = await resolveInteractiveUninstall({
+            args: uninstallArgs,
+            io,
+          })
+
+          await confirmDestructiveAction({
+            io,
+            enabled: !options.dryRun && !uninstallArgs.yes,
+            message:
+              selection.mode === 'full-wipe'
+                ? `Delete all installer-managed integrations and remove ${process.env.HIPPOCAMPUS_HOME ?? '~/.hippocampus'}?`
+                : `Remove installer-managed integrations for: ${selection.targets.join(', ')}?`,
+          })
+
+          result = runManagedUninstallCommand(io, {
+            ...options,
+            mode: selection.mode,
+            targets: selection.targets,
+          })
+          return
+        }
+
+        if (uninstallArgs.target === 'shell') {
+          if (typeof uninstallArgs.rcFile !== 'string' || uninstallArgs.rcFile.length === 0) {
+            throw new Error('uninstall shell requires <rc-file>.')
+          }
+
+          await confirmDestructiveAction({
+            io,
+            enabled: interactive && !options.dryRun && !uninstallArgs.yes,
+            message: `Remove the Hippocampus PATH block from ${uninstallArgs.rcFile}?`,
+          })
+
+          result = runUninstallShellCommand(io, {
+            ...options,
+            rcFilePath: uninstallArgs.rcFile,
+          })
+          return
+        }
+
+        await confirmDestructiveAction({
+          io,
+          enabled: interactive && !options.dryRun && !uninstallArgs.yes,
+          message: `Remove installer-managed ${uninstallArgs.target} integration?`,
+        })
+
+        if (uninstallArgs.target === 'claude') {
           result = runUninstallClaudeCommand(io, options)
           return
         }
@@ -509,17 +679,42 @@ const createParser = (argv: string[], io: CliIO) => {
               commandParser
                 .option('id', {
                   type: 'string',
-                  demandOption: true,
+                })
+                .option('yes', {
+                  type: 'boolean',
+                  default: false,
                 })
                 .option('json', {
                   type: 'boolean',
                   default: false,
                 }),
             handler: async args => {
+              const interactive = isInteractiveIo({ io, json: Boolean(args.json) })
+              const id =
+                typeof args.id === 'string' && args.id.length > 0
+                  ? args.id
+                  : interactive
+                    ? await promptInput({
+                        io,
+                        message: 'Memory id to delete:',
+                        validate: value => (value.trim().length > 0 ? true : 'Memory id is required.'),
+                      })
+                    : null
+
+              if (!id) {
+                throw new Error('memories delete requires --id outside an interactive terminal.')
+              }
+
+              await confirmDestructiveAction({
+                io,
+                enabled: interactive && !args.yes,
+                message: `Soft delete memory ${id}?`,
+              })
+
               await withRuntimeApp(app =>
                 runMemoriesDeleteCommand(
                   app,
-                  { id: String(args.id), source: { channel: 'cli' } },
+                  { id: String(id).trim(), source: { channel: 'cli' } },
                   io,
                   Boolean(args.json),
                 ),

@@ -73,6 +73,8 @@ hippo setup claude
 hippo setup codex
 hippo uninstall claude
 hippo uninstall codex
+hippo uninstall
+hippo uninstall --mode full-wipe --yes
 ```
 
 - `hippo setup claude` writes a `SessionStart` hook into `~/.claude/settings.json`
@@ -81,10 +83,14 @@ hippo uninstall codex
 - `hippo setup codex` also registers the Hippocampus MCP server and enables Codex hooks in `~/.codex/config.toml` using an installer-owned managed block
 - `hippo uninstall claude` removes only the installer-owned Claude hook, MCP registration, and generated bootstrap script
 - `hippo uninstall codex` removes only the installer-owned Codex hook, managed MCP block, and generated bootstrap script
+- `hippo uninstall` in an interactive terminal prompts for either `mcp/hooks only` or `full-wipe`
+- `full-wipe` removes all installer-managed integrations and deletes the resolved Hippocampus home directory, including config, SQLite DB, and cache files
+- `mcp/hooks only` removes installer-managed Claude/Codex wiring and any shell PATH blocks that Hippocampus previously tracked via `setup shell`
 - sibling hooks inside a shared `SessionStart` entry are preserved on setup and uninstall
 - Hippocampus will not overwrite an unmanaged `hippo` MCP entry; migrate or remove that config first
 - both install the same bootstrap text so sessions start with `memory-get-policy`, repo-scope `memory-list`, user-scope `memory-list`, and subject-based `memory-search` guidance
 - use `--dry-run` to preview the files before writing them
+- use `--yes` to skip interactive confirmation prompts for destructive CLI flows
 
 Default MCP surface:
 
@@ -158,6 +164,8 @@ This appends a block like:
 # hippo mcp
 export PATH="/absolute/path/to/hippocampus/dist:$PATH"
 ```
+
+`setup shell` also records the rc file path in installer state so interactive uninstall and `full-wipe` can remove that PATH block later without asking for the path again.
 
 ## Local Debugging
 
@@ -262,6 +270,8 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories inspect --id <memory
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories history --id <memory-id> --json
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories delete --id <memory-id> --json
 ```
+
+In an interactive terminal, `hippo memories delete` can prompt for the memory id and ask for confirmation. Automation and `--json` usage should continue to pass `--id` explicitly.
 
 ## Current Limitations
 

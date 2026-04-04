@@ -3,6 +3,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
+import { vi } from 'vitest'
+
+const promptMocks = vi.hoisted(() => ({
+  select: vi.fn(),
+  checkbox: vi.fn(),
+  input: vi.fn(),
+  confirm: vi.fn(),
+}))
+
+vi.mock('@inquirer/prompts', () => promptMocks)
+
 import { runCli } from '../src/cli/cli.js'
 
 const tempDirs: string[] = []
@@ -14,6 +25,7 @@ const createTempDir = (): string => {
 }
 
 const createIo = () => {
+  const stdin = new PassThrough()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
   let stdoutText = ''
@@ -27,9 +39,13 @@ const createIo = () => {
   })
 
   return {
-    io: { stdout, stderr },
+    io: { stdin, stdout, stderr },
     getStdout: () => stdoutText,
     getStderr: () => stderrText,
+    setInteractive: (interactive: boolean) => {
+      stdin.isTTY = interactive
+      stdout.isTTY = interactive
+    },
   }
 }
 
@@ -49,6 +65,8 @@ const withEnv = async (key: string, value: string, callback: () => Promise<void>
 }
 
 afterEach(() => {
+  vi.clearAllMocks()
+
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -106,7 +124,7 @@ describe('uninstall command', () => {
       expect(config.mcpServers?.hippo).toBeUndefined()
       expect(fs.existsSync(scriptPath)).toBe(false)
       expect(fs.existsSync(installerStatePath)).toBe(false)
-      expect(io.getStdout()).toContain('Claude session bootstrap removed.')
+      expect(io.getStdout()).toContain('Hippocampus integrations removed.')
       expect(io.getStderr()).toBe('')
     })
   })
@@ -217,7 +235,7 @@ describe('uninstall command', () => {
       expect(configText).toContain('[features]')
       expect(configText).toContain('codex_hooks = true')
       expect(fs.existsSync(scriptPath)).toBe(false)
-      expect(io.getStdout()).toContain('Codex session bootstrap removed.')
+      expect(io.getStdout()).toContain('Hippocampus integrations removed.')
       expect(io.getStderr()).toBe('')
     })
   })
@@ -266,19 +284,70 @@ describe('uninstall command', () => {
     process.chdir(repo)
 
     try {
-      await runCli(['setup', 'shell', rcFile], createIo().io)
+      await withEnv('HOME', home, async () => {
+        await runCli(['setup', 'shell', rcFile], createIo().io)
 
-      const io = createIo()
-      await runCli(['uninstall', 'shell', rcFile], io.io)
+        const io = createIo()
+        await runCli(['uninstall', 'shell', rcFile], io.io)
 
-      const rcText = fs.readFileSync(rcFile, 'utf8')
-      expect(rcText).toBe('export FOO="bar"\n')
-      expect(io.getStdout()).toContain('shell PATH bootstrap removed.')
-      expect(io.getStdout()).toContain(`source ${rcFile}`)
-      expect(io.getStderr()).toBe('')
+        const rcText = fs.readFileSync(rcFile, 'utf8')
+        expect(rcText).toBe('export FOO="bar"\n')
+        expect(io.getStdout()).toContain('shell PATH bootstrap removed.')
+        expect(io.getStdout()).toContain(`source ${rcFile}`)
+        expect(io.getStderr()).toBe('')
+      })
     } finally {
       process.chdir(previousCwd)
     }
+  })
+
+  it('tracks shell rc files during setup and removes them during mcp/hooks-only interactive uninstall', async () => {
+    const home = createTempDir()
+    const repo = createTempDir()
+    const rcFile = path.join(home, '.zshrc')
+
+    fs.mkdirSync(path.join(repo, 'dist'), { recursive: true })
+    fs.writeFileSync(rcFile, 'export FOO="bar"\n', 'utf8')
+
+    const previousCwd = process.cwd()
+    process.chdir(repo)
+
+    try {
+      await withEnv('HOME', home, async () => {
+        await runCli(['setup', 'shell', rcFile], createIo().io)
+
+        promptMocks.select.mockResolvedValue('mcp-hooks-only')
+        promptMocks.checkbox.mockResolvedValue(['shell'])
+        promptMocks.confirm.mockResolvedValue(true)
+
+        const io = createIo()
+        io.setInteractive(true)
+        await runCli(['uninstall'], io.io)
+
+        expect(fs.readFileSync(rcFile, 'utf8')).toBe('export FOO="bar"\n')
+        expect(io.getStdout()).toContain('Hippocampus integrations removed.')
+      })
+    } finally {
+      process.chdir(previousCwd)
+    }
+  })
+
+  it('supports full-wipe uninstall and removes the Hippocampus home directory', async () => {
+    const home = createTempDir()
+    const appHome = path.join(home, '.hippocampus-dev')
+
+    await withEnv('HOME', home, async () => {
+      await withEnv('HIPPOCAMPUS_HOME', appHome, async () => {
+        await runCli(['init'], createIo().io)
+        await runCli(['setup', 'claude'], createIo().io)
+
+        const io = createIo()
+        await runCli(['uninstall', '--mode', 'full-wipe', '--yes'], io.io)
+
+        expect(fs.existsSync(appHome)).toBe(false)
+        expect(io.getStdout()).toContain('Hippocampus full wipe removed.')
+      })
+    })
   })
 
   it('is idempotent when uninstalling Codex twice', async () => {
@@ -298,7 +367,7 @@ describe('uninstall command', () => {
 
       expect(fs.readFileSync(hooksPath, 'utf8')).toBe(hooksAfterFirst)
       expect(fs.readFileSync(configPath, 'utf8')).toBe(configAfterFirst)
-      expect(io.getStdout()).toContain('Codex session bootstrap removed.')
+      expect(io.getStdout()).toContain('Hippocampus integrations removed.')
       expect(io.getStderr()).toBe('')
     })
   })

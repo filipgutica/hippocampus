@@ -6,6 +6,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const promptMocks = vi.hoisted(() => ({
+  select: vi.fn(),
+  checkbox: vi.fn(),
+  input: vi.fn(),
+  confirm: vi.fn(),
+}))
+
+vi.mock('@inquirer/prompts', () => promptMocks)
+
 import { runCli } from '../src/cli/cli.js'
 import { buildApp, type RuntimeApp } from '../src/app/build-app.js'
 import { runSearchCommand } from '../src/cli/commands/search.command.js'
@@ -54,6 +64,7 @@ const initializeGitRepo = (repoRoot: string): void => {
 }
 
 const createIo = () => {
+  const stdin = new PassThrough()
   const stdout = new PassThrough()
   const stderr = new PassThrough()
   let stdoutText = ''
@@ -67,14 +78,19 @@ const createIo = () => {
   })
 
   return {
-    io: { stdout, stderr },
+    io: { stdin, stdout, stderr },
     getStdout: () => stdoutText,
     getStderr: () => stderrText,
+    setInteractive: (interactive: boolean) => {
+      stdin.isTTY = interactive
+      stdout.isTTY = interactive
+    },
   }
 }
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.clearAllMocks()
 
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -505,6 +521,66 @@ describe('runCli', () => {
       expect(archiveResult.total).toBe(1)
       expect(archiveResult.items[0]?.id).toBe(created.memory.id)
       expect(archiveResult.items[0]?.status).toBe('archived')
+    })
+  })
+
+  it('prompts for memory id and confirmation before deleting in an interactive terminal', async () => {
+    const home = createTempDir()
+    const scopeId = '/tmp/example-repo'
+
+    await withAppHome(home, async () => {
+      await runCli(['init'], createIo().io)
+
+      const applyIo = createIo()
+      await runCli(
+        [
+          'apply',
+          '--scope-type',
+          'repo',
+          '--scope-id',
+          scopeId,
+          '--type',
+          'preference',
+          '--origin',
+          'explicit_user_statement',
+          '--subject',
+          'Prefer pnpm',
+          '--statement',
+          'Use pnpm for this repo.',
+          '--json',
+        ],
+        applyIo.io,
+      )
+
+      const created = JSON.parse(applyIo.getStdout().trim()) as { memory: { id: string } }
+      promptMocks.input.mockResolvedValue(created.memory.id)
+      promptMocks.confirm.mockResolvedValue(true)
+
+      const deleteIo = createIo()
+      deleteIo.setInteractive(true)
+
+      await runCli(['memories', 'delete'], deleteIo.io)
+
+      expect(deleteIo.getStdout()).toContain('memory deleted.')
+      expect(promptMocks.input).toHaveBeenCalledTimes(1)
+      expect(promptMocks.confirm).toHaveBeenCalledTimes(1)
+
+      const inspectIo = createIo()
+      await runCli(['memories', 'inspect', '--id', created.memory.id, '--json'], inspectIo.io)
+      const inspectResult = JSON.parse(inspectIo.getStdout().trim()) as { status: string }
+      expect(inspectResult.status).toBe('deleted')
+    })
+  })
+
+  it('requires --id for memories delete outside an interactive terminal', async () => {
+    const home = createTempDir()
+
+    await withAppHome(home, async () => {
+      await runCli(['init'], createIo().io)
+
+      await expect(runCli(['memories', 'delete'], createIo().io)).rejects.toThrow(
+        'memories delete requires --id outside an interactive terminal.',
+      )
     })
   })
 

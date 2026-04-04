@@ -64,6 +64,9 @@ type InstallerState = {
   claude?: {
     ownsMcpServer?: boolean
   }
+  shell?: {
+    rcFilePaths: string[]
+  }
 }
 
 type CodexMcpServer = {
@@ -111,6 +114,18 @@ const setClaudeMcpOwnership = (state: InstallerState, ownsMcpServer: boolean): I
   const nextState = { ...state }
   delete nextState.claude
   return nextState
+}
+
+const trackShellRcFile = (state: InstallerState, rcFilePath: string): InstallerState => {
+  const tracked = new Set(state.shell?.rcFilePaths ?? [])
+  tracked.add(rcFilePath)
+
+  return {
+    ...state,
+    shell: {
+      rcFilePaths: [...tracked].sort(),
+    },
+  }
 }
 
 const removeManagedCommandHook = (
@@ -533,6 +548,7 @@ export const runSetupCodexCommand = (io: CliIO, options: SetupOptions): CliResul
 export const runSetupShellCommand = (io: CliIO, options: ShellSetupOptions): CliResult => {
   const rcFilePath = path.resolve(options.rcFilePath)
   const distPath = path.resolve(process.cwd(), 'dist')
+  const installerStatePath = resolveInstallerStatePath()
 
   if (!fs.existsSync(distPath) || !fs.statSync(distPath).isDirectory()) {
     throw new Error(`dist directory not found at ${distPath}. Run \`pnpm build\` first.`)
@@ -540,9 +556,11 @@ export const runSetupShellCommand = (io: CliIO, options: ShellSetupOptions): Cli
 
   const block = buildShellPathBlock(distPath)
   const updated = upsertShellPathBlock(readTextFile(rcFilePath), block)
+  const nextInstallerState = trackShellRcFile(loadInstallerState(installerStatePath), rcFilePath)
 
   if (!options.dryRun) {
     writeTextFile(rcFilePath, updated)
+    writeInstallerState(installerStatePath, nextInstallerState)
   }
 
   io.stdout.write(

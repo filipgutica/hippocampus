@@ -20,6 +20,7 @@ export type CliResult = {
 }
 
 export type CliIO = {
+  stdin?: NodeJS.ReadableStream
   stdout: NodeJS.WritableStream
   stderr: NodeJS.WritableStream
 }

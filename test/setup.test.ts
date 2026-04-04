@@ -332,19 +332,26 @@ describe('setup command', () => {
     process.chdir(repo)
 
     try {
-      const io = createIo()
-      await runCli(['setup', 'shell', rcFile], io.io)
-      await runCli(['setup', 'shell', rcFile], io.io)
+      await withEnv('HOME', home, async () => {
+        const io = createIo()
+        await runCli(['setup', 'shell', rcFile], io.io)
+        await runCli(['setup', 'shell', rcFile], io.io)
 
-      const rcText = fs.readFileSync(rcFile, 'utf8')
-      const distPath = path.resolve(process.cwd(), 'dist')
+        const rcText = fs.readFileSync(rcFile, 'utf8')
+        const distPath = path.resolve(process.cwd(), 'dist')
+        const installerStatePath = path.join(home, '.hippocampus', 'installer-state.json')
+        const installerState = JSON.parse(fs.readFileSync(installerStatePath, 'utf8')) as {
+          shell?: { rcFilePaths?: string[] }
+        }
 
-      expect(rcText).toContain('export FOO="bar"')
-      expect(rcText).toContain('# hippo mcp')
-      expect(rcText).toContain(`export PATH="${distPath}:$PATH"`)
-      expect(rcText.match(/# hippo mcp/g)).toHaveLength(1)
-      expect(io.getStdout()).toContain(`source ${rcFile}`)
-      expect(io.getStderr()).toBe('')
+        expect(rcText).toContain('export FOO="bar"')
+        expect(rcText).toContain('# hippo mcp')
+        expect(rcText).toContain(`export PATH="${distPath}:$PATH"`)
+        expect(rcText.match(/# hippo mcp/g)).toHaveLength(1)
+        expect(installerState.shell?.rcFilePaths).toEqual([path.resolve(rcFile)])
+        expect(io.getStdout()).toContain(`source ${rcFile}`)
+        expect(io.getStderr()).toBe('')
+      })
     } finally {
       process.chdir(previousCwd)
     }

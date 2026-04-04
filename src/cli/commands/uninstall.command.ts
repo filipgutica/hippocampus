@@ -9,8 +9,12 @@ import {
   resolveCodexConfigPath,
   resolveCodexHooksPath,
   resolveCodexSessionStartScriptPath,
+  resolveHippoHome,
   resolveInstallerStatePath,
 } from '../setup/bootstrap.js'
+
+export type UninstallMode = 'mcp-hooks-only' | 'full-wipe'
+export type UninstallTarget = 'claude' | 'codex' | 'shell'
 
 type UninstallOptions = {
   dryRun: boolean
@@ -18,6 +22,11 @@ type UninstallOptions = {
 
 type ShellUninstallOptions = UninstallOptions & {
   rcFilePath: string
+}
+
+type ManagedUninstallOptions = UninstallOptions & {
+  mode: UninstallMode
+  targets: UninstallTarget[]
 }
 
 type CommandHook = {
@@ -59,6 +68,15 @@ type InstallerState = {
   claude?: {
     ownsMcpServer?: boolean
   }
+  shell?: {
+    rcFilePaths: string[]
+  }
+}
+
+type OperationResult = {
+  changed: boolean
+  notes: string[]
+  paths: string[]
 }
 
 const readTextFile = (filePath: string): string | null => {
@@ -87,10 +105,47 @@ const writeInstallerState = (filePath: string, state: InstallerState): void => {
   writeTextFile(filePath, `${JSON.stringify(state, null, 2)}\n`)
 }
 
+const persistInstallerState = ({
+  filePath,
+  current,
+  next,
+}: {
+  filePath: string
+  current: InstallerState
+  next: InstallerState
+}): void => {
+  if (JSON.stringify(current) === JSON.stringify(next)) {
+    return
+  }
+
+  if (Object.keys(next).length === 0) {
+    deleteIfExists(filePath)
+    return
+  }
+
+  writeInstallerState(filePath, next)
+}
+
 const clearClaudeMcpOwnership = (state: InstallerState): InstallerState => {
   const nextState = { ...state }
   delete nextState.claude
   return nextState
+}
+
+const untrackShellRcFile = (state: InstallerState, rcFilePath: string): InstallerState => {
+  const nextPaths = (state.shell?.rcFilePaths ?? []).filter(tracked => tracked !== rcFilePath)
+  if (nextPaths.length === 0) {
+    const nextState = { ...state }
+    delete nextState.shell
+    return nextState
+  }
+
+  return {
+    ...state,
+    shell: {
+      rcFilePaths: nextPaths,
+    },
+  }
 }
 
 const describePaths = (label: string, paths: string[]): string =>
@@ -220,19 +275,25 @@ const stripShellPathBlock = (existing: string | null): [string | null, boolean] 
 
 const deleteIfExists = (filePath: string): void => {
   if (fs.existsSync(filePath)) {
-    fs.rmSync(filePath, { force: true })
+    fs.rmSync(filePath, { force: true, recursive: true })
   }
 }
 
-const runUninstallClaude = (io: CliIO, options: UninstallOptions): CliResult => {
+const removeClaudeIntegration = ({
+  dryRun,
+  installerState,
+  installerStatePath,
+}: {
+  dryRun: boolean
+  installerState: InstallerState
+  installerStatePath: string
+}): { result: OperationResult; installerState: InstallerState } => {
   const settingsPath = resolveClaudeSettingsPath()
   const userConfigPath = resolveClaudeUserConfigPath()
   const scriptPath = resolveClaudeSessionStartScriptPath()
-  const installerStatePath = resolveInstallerStatePath()
   const command = `node ${JSON.stringify(scriptPath)}`
   const currentSettings = loadClaudeSettings(settingsPath)
   const currentUserConfig = loadClaudeUserConfig(userConfigPath)
-  const currentInstallerState = loadInstallerState(installerStatePath)
   const hookResult = removeManagedCommandHook(currentSettings.hooks?.SessionStart, command)
   const nextSettings: ClaudeSettings = { ...currentSettings }
 
@@ -253,9 +314,10 @@ const runUninstallClaude = (io: CliIO, options: UninstallOptions): CliResult => 
 
   let nextUserConfig = currentUserConfig
   let userConfigChanged = false
-  let nextInstallerState = currentInstallerState
+  let nextInstallerState = installerState
+  const notes: string[] = []
 
-  if (currentInstallerState.claude?.ownsMcpServer === true && currentUserConfig.mcpServers?.hippo) {
+  if (installerState.claude?.ownsMcpServer === true && currentUserConfig.mcpServers?.hippo) {
     const nextMcpServers = { ...(currentUserConfig.mcpServers ?? {}) }
     delete nextMcpServers.hippo
     nextUserConfig =
@@ -266,12 +328,14 @@ const runUninstallClaude = (io: CliIO, options: UninstallOptions): CliResult => 
           }
         : {}
     userConfigChanged = true
-    nextInstallerState = clearClaudeMcpOwnership(currentInstallerState)
-  } else if (currentInstallerState.claude?.ownsMcpServer === true) {
-    nextInstallerState = clearClaudeMcpOwnership(currentInstallerState)
+    nextInstallerState = clearClaudeMcpOwnership(installerState)
+  } else if (installerState.claude?.ownsMcpServer === true) {
+    nextInstallerState = clearClaudeMcpOwnership(installerState)
+  } else if (currentUserConfig.mcpServers?.hippo) {
+    notes.push('preserved: existing user-managed Claude mcpServers.hippo was left unchanged.')
   }
 
-  if (!options.dryRun) {
+  if (!dryRun) {
     if (hookResult.changed) {
       writeClaudeSettings(settingsPath, nextSettings)
     }
@@ -280,28 +344,25 @@ const runUninstallClaude = (io: CliIO, options: UninstallOptions): CliResult => 
       writeClaudeUserConfig(userConfigPath, nextUserConfig)
     }
 
-    if (JSON.stringify(nextInstallerState) !== JSON.stringify(currentInstallerState)) {
-      if (Object.keys(nextInstallerState).length === 0) {
-        deleteIfExists(installerStatePath)
-      } else {
-        writeInstallerState(installerStatePath, nextInstallerState)
-      }
-    }
-
+    persistInstallerState({
+      filePath: installerStatePath,
+      current: installerState,
+      next: nextInstallerState,
+    })
     deleteIfExists(scriptPath)
   }
 
-  io.stdout.write(
-    [
-      options.dryRun ? 'dry run: Claude session bootstrap would be removed.' : 'Claude session bootstrap removed.',
-      describePaths('files', [settingsPath, userConfigPath, scriptPath, installerStatePath]),
-    ].join('\n'),
-  )
-
-  return { code: 0 }
+  return {
+    result: {
+      changed: hookResult.changed || userConfigChanged || installerState !== nextInstallerState || fs.existsSync(scriptPath),
+      notes,
+      paths: [settingsPath, userConfigPath, scriptPath],
+    },
+    installerState: nextInstallerState,
+  }
 }
 
-const runUninstallCodex = (io: CliIO, options: UninstallOptions): CliResult => {
+const removeCodexIntegration = ({ dryRun }: { dryRun: boolean }): OperationResult => {
   const hooksPath = resolveCodexHooksPath()
   const codexConfigPath = resolveCodexConfigPath()
   const scriptPath = resolveCodexSessionStartScriptPath()
@@ -324,9 +385,15 @@ const runUninstallCodex = (io: CliIO, options: UninstallOptions): CliResult => {
       delete nextHooks.hooks
     }
   }
-  const strippedConfig = stripManagedTomlBlock(readTextFile(codexConfigPath))
 
-  if (!options.dryRun) {
+  const strippedConfig = stripManagedTomlBlock(readTextFile(codexConfigPath))
+  const notes: string[] = []
+  const currentConfig = readTextFile(codexConfigPath)
+  if (currentConfig?.includes('[mcp_servers.hippo]') && !strippedConfig.changed) {
+    notes.push('preserved: existing user-managed Codex [mcp_servers.hippo] was left unchanged.')
+  }
+
+  if (!dryRun) {
     if (hookResult.changed) {
       writeCodexHooks(hooksPath, nextHooks)
     }
@@ -338,31 +405,164 @@ const runUninstallCodex = (io: CliIO, options: UninstallOptions): CliResult => {
     deleteIfExists(scriptPath)
   }
 
+  return {
+    changed: hookResult.changed || strippedConfig.changed || fs.existsSync(scriptPath),
+    notes,
+    paths: [hooksPath, codexConfigPath, scriptPath],
+  }
+}
+
+const removeShellInstall = ({
+  dryRun,
+  installerState,
+  installerStatePath,
+  rcFilePath,
+}: {
+  dryRun: boolean
+  installerState: InstallerState
+  installerStatePath: string
+  rcFilePath: string
+}): { result: OperationResult; installerState: InstallerState } => {
+  const resolvedRcFilePath = path.resolve(rcFilePath)
+  const current = readTextFile(resolvedRcFilePath)
+  const [next, changed] = stripShellPathBlock(current)
+  const nextInstallerState = untrackShellRcFile(installerState, resolvedRcFilePath)
+
+  if (!dryRun && changed && next !== null) {
+    writeTextFile(resolvedRcFilePath, next)
+  }
+
+  if (!dryRun) {
+    persistInstallerState({
+      filePath: installerStatePath,
+      current: installerState,
+      next: nextInstallerState,
+    })
+  }
+
+  return {
+    result: {
+      changed: changed || JSON.stringify(installerState) !== JSON.stringify(nextInstallerState),
+      notes: [],
+      paths: [resolvedRcFilePath],
+    },
+    installerState: nextInstallerState,
+  }
+}
+
+const removeHippoHome = ({ dryRun }: { dryRun: boolean }): OperationResult => {
+  const hippoHome = resolveHippoHome()
+  const existed = fs.existsSync(hippoHome)
+
+  if (!dryRun) {
+    deleteIfExists(hippoHome)
+  }
+
+  return {
+    changed: existed,
+    notes: [],
+    paths: [hippoHome],
+  }
+}
+
+const summarizeOperation = ({
+  label,
+  results,
+}: {
+  label: string
+  results: OperationResult[]
+}): string => {
+  const paths = [...new Set(results.flatMap(result => result.paths))]
+  const notes = results.flatMap(result => result.notes)
+
+  return [label, describePaths('files', paths), ...(notes.length > 0 ? ['', ...notes] : [])].join('\n')
+}
+
+export const listTrackedShellRcFiles = (): string[] => loadInstallerState(resolveInstallerStatePath()).shell?.rcFilePaths ?? []
+
+export const runManagedUninstallCommand = (io: CliIO, options: ManagedUninstallOptions): CliResult => {
+  const installerStatePath = resolveInstallerStatePath()
+  let installerState = loadInstallerState(installerStatePath)
+  const results: OperationResult[] = []
+
+  if (options.targets.includes('claude')) {
+    const claudeResult = removeClaudeIntegration({
+      dryRun: options.dryRun,
+      installerState,
+      installerStatePath,
+    })
+    installerState = claudeResult.installerState
+    results.push(claudeResult.result)
+  }
+
+  if (options.targets.includes('codex')) {
+    results.push(removeCodexIntegration({ dryRun: options.dryRun }))
+  }
+
+  if (options.targets.includes('shell')) {
+    for (const rcFilePath of installerState.shell?.rcFilePaths ?? []) {
+      const shellResult = removeShellInstall({
+        dryRun: options.dryRun,
+        installerState,
+        installerStatePath,
+        rcFilePath,
+      })
+      installerState = shellResult.installerState
+      results.push(shellResult.result)
+    }
+  }
+
+  if (options.mode === 'full-wipe') {
+    results.push(removeHippoHome({ dryRun: options.dryRun }))
+  }
+
   io.stdout.write(
-    [
-      options.dryRun ? 'dry run: Codex session bootstrap would be removed.' : 'Codex session bootstrap removed.',
-      describePaths('files', [hooksPath, codexConfigPath, scriptPath]),
-    ].join('\n'),
+    `${summarizeOperation({
+      label:
+        options.mode === 'full-wipe'
+          ? options.dryRun
+            ? 'dry run: Hippocampus full wipe would be removed.'
+            : 'Hippocampus full wipe removed.'
+          : options.dryRun
+            ? 'dry run: Hippocampus integrations would be removed.'
+            : 'Hippocampus integrations removed.',
+      results,
+    })}\n`,
   )
 
   return { code: 0 }
 }
 
-const runUninstallShell = (io: CliIO, options: ShellUninstallOptions): CliResult => {
-  const rcFilePath = path.resolve(options.rcFilePath)
-  const current = readTextFile(rcFilePath)
-  const [next, changed] = stripShellPathBlock(current)
+const runUninstallClaude = (io: CliIO, options: UninstallOptions): CliResult =>
+  runManagedUninstallCommand(io, {
+    dryRun: options.dryRun,
+    mode: 'mcp-hooks-only',
+    targets: ['claude'],
+  })
 
-  if (!options.dryRun && changed && next !== null) {
-    writeTextFile(rcFilePath, next)
-  }
+const runUninstallCodex = (io: CliIO, options: UninstallOptions): CliResult =>
+  runManagedUninstallCommand(io, {
+    dryRun: options.dryRun,
+    mode: 'mcp-hooks-only',
+    targets: ['codex'],
+  })
+
+const runUninstallShell = (io: CliIO, options: ShellUninstallOptions): CliResult => {
+  const installerStatePath = resolveInstallerStatePath()
+  const installerState = loadInstallerState(installerStatePath)
+  const { result } = removeShellInstall({
+    dryRun: options.dryRun,
+    installerState,
+    installerStatePath,
+    rcFilePath: options.rcFilePath,
+  })
 
   io.stdout.write(
     [
       options.dryRun ? 'dry run: shell PATH bootstrap would be removed.' : 'shell PATH bootstrap removed.',
-      describePaths('files', [rcFilePath]),
+      describePaths('files', result.paths),
       '',
-      `next step: run \`source ${rcFilePath}\` or start a new shell session.`,
+      `next step: run \`source ${path.resolve(options.rcFilePath)}\` or start a new shell session.`,
     ].join('\n'),
   )
 

@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { AppError } from '../common/errors.js'
 import type { ScopeRef } from '../common/types/scope-ref.js'
-import type { ApplyObservationInput, ObservationSource } from './dto/apply-observation.dto.js'
-import type { MemoryEventRecord } from './models/memory-event-record.js'
+import {
+  memoryDraftInputSchema,
+  observationSourceSchema,
+  type MemoryDraftInput,
+  type ObservationSource,
+} from './dto/apply-observation.dto.js'
+import type { MemoryEventEntity } from './entities/memory-event.entity.js'
 import type { MemoryEventType, MemoryType } from './memory.types.js'
 
 type EventInsertInput = {
@@ -11,7 +17,7 @@ type EventInsertInput = {
   scope: ScopeRef
   type: MemoryType
   subjectKey: string
-  observation?: ApplyObservationInput | null
+  observation?: MemoryDraftInput | null
   source?: ObservationSource | null
   reason: string
   now: string
@@ -31,7 +37,11 @@ type EventRow = {
   created_at: string
 }
 
-const toRecord = (row: EventRow): MemoryEventRecord => ({
+type LatestEventRow = EventRow & {
+  row_number: number
+}
+
+const toRecord = (row: EventRow): MemoryEventEntity => ({
   id: row.id,
   memoryId: row.memory_id,
   eventType: row.event_type,
@@ -47,6 +57,44 @@ const toRecord = (row: EventRow): MemoryEventRecord => ({
   createdAt: row.created_at,
 })
 
+const assertValidObservation = ({
+  observation,
+  eventType,
+}: {
+  observation: MemoryDraftInput | null
+  eventType: MemoryEventType
+}): MemoryDraftInput | null => {
+  if (observation == null) {
+    return null
+  }
+
+  const parsed = memoryDraftInputSchema.safeParse(observation)
+  if (!parsed.success) {
+    throw new AppError('INVALID_EVENT_OBSERVATION', `Memory event ${eventType} has invalid observation payload.`)
+  }
+
+  return parsed.data
+}
+
+const assertValidSource = ({
+  source,
+  eventType,
+}: {
+  source: ObservationSource | null
+  eventType: MemoryEventType
+}): ObservationSource | null => {
+  if (source == null) {
+    return null
+  }
+
+  const parsed = observationSourceSchema.safeParse(source)
+  if (!parsed.success) {
+    throw new AppError('INVALID_EVENT_SOURCE', `Memory event ${eventType} has invalid source payload.`)
+  }
+
+  return parsed.data
+}
+
 export class MemoryEventRepository {
   private readonly db: InstanceType<typeof Database>
 
@@ -54,10 +102,18 @@ export class MemoryEventRepository {
     this.db = db
   }
 
-  insert(input: EventInsertInput): MemoryEventRecord {
+  insert(input: EventInsertInput): MemoryEventEntity {
     const id = randomUUID()
-    const observationJson = JSON.stringify(input.observation ?? null)
-    const sourceJson = input.source ? JSON.stringify(input.source) : null
+    const observation = assertValidObservation({
+      observation: input.observation ?? null,
+      eventType: input.eventType,
+    })
+    const source = assertValidSource({
+      source: input.source ?? null,
+      eventType: input.eventType,
+    })
+    const observationJson = JSON.stringify(observation)
+    const sourceJson = source ? JSON.stringify(source) : null
 
     this.db
       .prepare(
@@ -96,7 +152,7 @@ export class MemoryEventRepository {
     }
   }
 
-  listByMemoryId(memoryId: string): MemoryEventRecord[] {
+  listByMemoryId(memoryId: string): MemoryEventEntity[] {
     const rows = this.db
       .prepare(
         `
@@ -107,6 +163,34 @@ export class MemoryEventRepository {
         `,
       )
       .all(memoryId) as EventRow[]
+
+    return rows.map(toRecord)
+  }
+
+  listLatestByMemoryIds(memoryIds: string[]): MemoryEventEntity[] {
+    if (memoryIds.length === 0) {
+      return []
+    }
+
+    const placeholders = memoryIds.map(() => '?').join(', ')
+    const rows = this.db
+      .prepare(
+        `
+          SELECT *
+          FROM (
+            SELECT
+              *,
+              ROW_NUMBER() OVER (
+                PARTITION BY memory_id
+                ORDER BY created_at DESC, rowid DESC
+              ) AS row_number
+            FROM memory_events
+            WHERE memory_id IN (${placeholders})
+          )
+          WHERE row_number = 1
+        `,
+      )
+      .all(...memoryIds) as LatestEventRow[]
 
     return rows.map(toRecord)
   }

@@ -120,6 +120,13 @@ Policy discovery flow:
 - read `hippocampus://skills/memory-scope` for scope selection guidance
 - rely on MCP tool descriptions to reinforce when to search, list, inspect, contradict, or save
 
+MCP mutation provenance:
+
+- `memory-apply-observation` and `memory-contradict` require `source = { channel: 'mcp', agent: 'codex' | 'claude', sessionId }`
+- `memory-delete` follows the same contract when registered in a non-default MCP profile, but it is still not exposed on the default MCP surface
+- `sessionId` should be the real Codex or Claude session identifier supplied by the MCP caller
+- CLI-origin writes still use `{ channel: 'cli' }`
+
 ## Local Development
 
 From a fresh checkout:
@@ -229,6 +236,7 @@ Fields to expect on stored memories:
 - `supersededBy`: id of the direct replacement memory when a memory has been contradicted
 - `lastReinforcedAt`: when the memory was last reaffirmed by write-side evidence
 - `retrievalCount`, `lastRetrievedAt`, `strength`: retrieval-side salience signals updated by successful `memory-search` results only
+- `latestEventSummary`: the newest event-derived provenance summary for the memory, containing `eventType`, `createdAt`, and `source`
 
 Current retrieval behavior:
 
@@ -239,6 +247,8 @@ Current retrieval behavior:
 - `memory-search` updates retrieval-side salience for returned top-N memories only
 - `memory-list` is the broad recall path for `scope + type`
 - `memory-list`, `memory-get`, and `memory-get-history` stay retrieval-neutral
+- `memory-search`, `memory-list`, and `memory-get` return memory payloads with `latestEventSummary`
+- full event arrays remain confined to `memory-get-history`
 - retrieval `strength` decays over time from `lastRetrievedAt` and is used only as a search tie-break, not as evidence
 - a `candidate` memory promotes to `active` after enough reinforcement
 - stale `candidate` and `active` memories are archived only when both `lastReinforcedAt` and `lastRetrievedAt` are stale, or when they were never retrieved

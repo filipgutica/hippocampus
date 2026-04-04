@@ -5,7 +5,13 @@ import { resolveCanonicalScopeId } from '../common/resolve-canonical-scope-id.js
 import { MemoryEmbeddingRepository } from './memory-embedding.repository.js'
 import type { EmbeddingProvider } from './local-embedding-provider.js'
 import { normalizeSubject } from './subject-normalizer.js'
-import type { ApplyObservationInput, ObservationSource } from './dto/apply-observation.dto.js'
+import {
+  memoryDraftInputSchema,
+  observationSourceSchema,
+  type ApplyObservationInput,
+  type MemoryDraftInput,
+  type ObservationSource,
+} from './dto/apply-observation.dto.js'
 import type { ContradictMemoryInput } from './dto/contradict-memory.dto.js'
 import type { DeleteMemoryInput } from './dto/delete-memory.dto.js'
 import type { GetPolicyResult } from './dto/get-policy.dto.js'
@@ -45,9 +51,10 @@ import type {
   MaintenanceFlushEntry,
   MaintenancePassResult,
   SearchResult,
-} from './models/memory-result.js'
-import type { ParsedMemoryEventRecord } from './models/memory-event-record.js'
-import type { MemoryRecord } from './models/memory-record.js'
+} from './dto/memory-result.dto.js'
+import type { MemoryEventDto } from './dto/memory-event.dto.js'
+import type { LatestMemoryEventSummaryDto, MemoryDto } from './dto/memory.dto.js'
+import type { MemoryEntity } from './entities/memory.entity.js'
 import type { MemoryOrigin, MemoryType } from './memory.types.js'
 import type Database from 'better-sqlite3'
 import {
@@ -67,7 +74,7 @@ type MemoryServiceDeps = {
 }
 
 type ScoredMemory = {
-  memory: MemoryRecord
+  memory: MemoryEntity
   score: number
 }
 
@@ -83,15 +90,79 @@ const toPositiveLimit = (limit: number | null | undefined): number => {
   return Math.min(limit, 100)
 }
 
-/**
- * Rehydrates a JSON column back into its typed in-memory representation.
- */
-const parseStoredJson = <T>(value: string | null): T | null => {
+const parseStoredEventJson = ({
+  eventId,
+  field,
+  value,
+}: {
+  eventId: string
+  field: 'observationJson' | 'sourceJson'
+  value: string | null
+}): unknown | null => {
   if (value == null) {
     return null
   }
 
-  return JSON.parse(value) as T | null
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    throw new AppError('INVALID_EVENT_PAYLOAD', `Stored memory event ${eventId} has invalid ${field}.`)
+  }
+}
+
+const parseStoredObservation = ({
+  eventId,
+  observationJson,
+}: {
+  eventId: string
+  observationJson: string
+}): MemoryDraftInput | null => {
+  const parsedJson = parseStoredEventJson({
+    eventId,
+    field: 'observationJson',
+    value: observationJson,
+  })
+  const parsed = memoryDraftInputSchema.nullable().safeParse(parsedJson)
+
+  if (!parsed.success) {
+    throw new AppError('INVALID_EVENT_OBSERVATION', `Stored memory event ${eventId} has invalid observationJson.`)
+  }
+
+  return parsed.data
+}
+
+const parseStoredSource = ({
+  eventId,
+  sourceJson,
+}: {
+  eventId: string
+  sourceJson: string | null
+}): ObservationSource | null => {
+  const parsedJson = parseStoredEventJson({
+    eventId,
+    field: 'sourceJson',
+    value: sourceJson,
+  })
+  const parsed = observationSourceSchema.nullable().safeParse(parsedJson)
+
+  if (!parsed.success) {
+    throw new AppError('INVALID_EVENT_SOURCE', `Stored memory event ${eventId} has invalid sourceJson.`)
+  }
+
+  return parsed.data
+}
+
+const validateObservationSource = (source: ObservationSource | null | undefined): ObservationSource | null => {
+  if (source == null) {
+    return null
+  }
+
+  const parsed = observationSourceSchema.safeParse(source)
+  if (!parsed.success) {
+    throw new AppError('INVALID_EVENT_SOURCE', 'Observation source is invalid.')
+  }
+
+  return parsed.data
 }
 
 /**
@@ -168,6 +239,18 @@ const toReplacementReason = ({ oldMemoryId }: { oldMemoryId: string }): string =
   `Memory was created as the active replacement for contradicted memory ${oldMemoryId}.`
 
 /**
+ * Removes transport-only provenance from an observation before persisting it in event history.
+ */
+const toMemoryDraftInput = (input: MemoryDraftInput): MemoryDraftInput => ({
+  scope: input.scope,
+  type: input.type,
+  subject: input.subject,
+  statement: input.statement,
+  origin: input.origin,
+  details: input.details ?? null,
+})
+
+/**
  * Formats archive reasons for both operator sweeps and automatic sweeps.
  */
 const toArchiveReason = ({
@@ -240,17 +323,40 @@ const toParsedEvent = (event: {
   sourceJson: string | null
   reason: string
   createdAt: string
-}): ParsedMemoryEventRecord => ({
+}): MemoryEventDto => ({
   id: event.id,
   memoryId: event.memoryId,
-  eventType: event.eventType as ParsedMemoryEventRecord['eventType'],
+  eventType: event.eventType as MemoryEventDto['eventType'],
   scope: event.scope,
   type: event.type,
   subjectKey: event.subjectKey,
-  observation: parseStoredJson(event.observationJson),
-  source: parseStoredJson(event.sourceJson),
+  observation: parseStoredObservation({
+    eventId: event.id,
+    observationJson: event.observationJson,
+  }),
+  source: parseStoredSource({
+    eventId: event.id,
+    sourceJson: event.sourceJson,
+  }),
   reason: event.reason,
   createdAt: event.createdAt,
+})
+
+/**
+ * Maps a persisted event row to the compact provenance summary carried on memory DTOs.
+ */
+const toLatestMemoryEventSummary = (event: {
+  id: string
+  eventType: MemoryEventDto['eventType']
+  sourceJson: string | null
+  createdAt: string
+}): LatestMemoryEventSummaryDto => ({
+  eventType: event.eventType,
+  createdAt: event.createdAt,
+  source: parseStoredSource({
+    eventId: event.id,
+    sourceJson: event.sourceJson,
+  }),
 })
 
 /**
@@ -277,8 +383,8 @@ const compareSearchMemories = ({
   right,
   now,
 }: {
-  left: MemoryRecord
-  right: MemoryRecord
+  left: MemoryEntity
+  right: MemoryEntity
   now: string
 }): number => {
   const leftStrength = getEffectiveRetrievalStrength({
@@ -330,12 +436,34 @@ export class MemoryService {
   }
 
   /**
+   * Hydrates memory rows with their latest event provenance summary.
+   */
+  private enrichMemoryDtos(memories: MemoryEntity[]): MemoryDto[] {
+    if (memories.length === 0) {
+      return []
+    }
+
+    const latestEvents = this.deps.memoryEventRepository.listLatestByMemoryIds(memories.map(memory => memory.id))
+    const latestEventSummaries = new Map(
+      latestEvents
+        .filter(event => event.memoryId != null)
+        .map(event => [event.memoryId, toLatestMemoryEventSummary(event)] as const),
+    )
+
+    return memories.map(memory => ({
+      ...memory,
+      latestEventSummary: latestEventSummaries.get(memory.id) ?? null,
+    }))
+  }
+
+  /**
    * Expands a memory response so contradicted memories include their replacement record.
    */
-  private createMemoryGetResult(memory: MemoryRecord): MemoryGetResult {
+  private createMemoryGetResult(memory: MemoryEntity): MemoryGetResult {
     if (!memory.supersededBy) {
+      const [memoryDto] = this.enrichMemoryDtos([memory])
       return {
-        ...memory,
+        ...memoryDto,
         supersededByMemory: null,
       }
     }
@@ -348,16 +476,18 @@ export class MemoryService {
       )
     }
 
+    const [memoryDto, supersededByMemoryDto] = this.enrichMemoryDtos([memory, supersededByMemory])
+
     return {
-      ...memory,
-      supersededByMemory,
+      ...memoryDto,
+      supersededByMemory: supersededByMemoryDto,
     }
   }
 
   /**
    * Loads a memory and rejects edits when it has already been deleted or superseded.
    */
-  private assertMemoryEditable(id: string): MemoryRecord {
+  private assertMemoryEditable(id: string): MemoryEntity {
     const memory = this.deps.memoryRepository.getById(id)
     if (!memory) {
       throw new AppError('MEMORY_NOT_FOUND', `Memory not found: ${id}`)
@@ -537,7 +667,7 @@ export class MemoryService {
         dryRun,
         olderThanDays,
         cutoffByScope,
-        items,
+        items: this.enrichMemoryDtos(items),
         total: items.length,
       }
     }
@@ -549,7 +679,7 @@ export class MemoryService {
       })
       const hasMoreStaleMemories = limit != null && staleMemories.length > limit
       const memoriesToArchive = hasMoreStaleMemories ? staleMemories.slice(0, limit) : staleMemories
-      const archivedMemories: MemoryRecord[] = []
+      const archivedMemories: MemoryEntity[] = []
 
       for (const staleMemory of memoriesToArchive) {
         const normalizedStrength = getEffectiveRetrievalStrength({
@@ -600,7 +730,7 @@ export class MemoryService {
         dryRun,
         olderThanDays,
         cutoffByScope,
-        items: archivedMemories,
+        items: this.enrichMemoryDtos(archivedMemories),
         total: archivedMemories.length,
       }
     })
@@ -609,7 +739,7 @@ export class MemoryService {
   /**
    * Refreshes the cached embedding for a memory when its source text or model fingerprint changes.
    */
-  private async ensureMemoryEmbedding(memory: MemoryRecord, modelFingerprint: string): Promise<number[]> {
+  private async ensureMemoryEmbedding(memory: MemoryEntity, modelFingerprint: string): Promise<number[]> {
     const sourceText = getSemanticSourceText(memory)
     const sourceTextHash = getSourceTextHash(sourceText)
     const existing = this.deps.memoryEmbeddingRepository.getByMemoryId(memory.id)
@@ -646,7 +776,7 @@ export class MemoryService {
     query: string
     queryEmbedding: number[]
     now: string
-  }): Promise<MemoryRecord[]> {
+  }): Promise<MemoryEntity[]> {
     try {
       const candidates = this.deps.memoryRepository.listFtsCandidates({
         scope: input.scope,
@@ -684,7 +814,7 @@ export class MemoryService {
     type: MemoryType | null
     queryEmbedding: number[]
     now: string
-  }): Promise<MemoryRecord[]> {
+  }): Promise<MemoryEntity[]> {
     const candidates = this.deps.memoryRepository.list({
       scope: input.scope,
       type: input.type,
@@ -706,10 +836,10 @@ export class MemoryService {
    * Computes cosine similarity for each candidate and returns the surviving set in rank order.
    */
   private async scoreSemanticCandidates(input: {
-    candidates: MemoryRecord[]
+    candidates: MemoryEntity[]
     queryEmbedding: number[]
     now: string
-  }): Promise<MemoryRecord[]> {
+  }): Promise<MemoryEntity[]> {
     const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
     const embeddings = await Promise.all(
       input.candidates.map(candidate => this.ensureMemoryEmbedding(candidate, modelFingerprint)),
@@ -733,7 +863,7 @@ export class MemoryService {
   /**
    * Warms the embedding cache asynchronously without blocking the calling write path.
    */
-  private scheduleEagerEmbedding(memory: MemoryRecord): void {
+  private scheduleEagerEmbedding(memory: MemoryEntity): void {
     globalThis.queueMicrotask(() => {
       void (async () => {
         try {
@@ -754,7 +884,7 @@ export class MemoryService {
     type: MemoryType | null
     subject: string
     now: string
-  }): MemoryRecord[] {
+  }): MemoryEntity[] {
     return this.deps.memoryRepository
       .search({
         scope: input.scope,
@@ -773,7 +903,7 @@ export class MemoryService {
   /**
    * Applies retrieval bookkeeping to the items returned from a search result page.
    */
-  private persistSearchRetrievalState(items: MemoryRecord[], now: string): MemoryRecord[] {
+  private persistSearchRetrievalState(items: MemoryEntity[], now: string): MemoryEntity[] {
     if (items.length === 0) {
       return items
     }
@@ -807,6 +937,7 @@ export class MemoryService {
     const statement = ensureNonEmpty(input.statement, 'INVALID_STATEMENT', 'Observation statement must not be empty.')
     const origin = ensureMemoryOrigin(input.origin)
     const subjectKey = normalizeSubject(input.subject)
+    const source = validateObservationSource(input.source)
 
     this.maybeArchiveStaleMemories()
 
@@ -826,8 +957,8 @@ export class MemoryService {
           scope,
           type,
           subjectKey,
-          observation: input,
-          source: input.source ?? null,
+          observation: toMemoryDraftInput(input),
+          source,
           reason: decision.reason,
           now,
         })
@@ -856,8 +987,8 @@ export class MemoryService {
           scope,
           type: memory.type,
           subjectKey,
-          observation: input,
-          source: input.source ?? null,
+          observation: toMemoryDraftInput(input),
+          source,
           reason: decision.reason,
           now,
         })
@@ -895,8 +1026,8 @@ export class MemoryService {
         scope,
         type: memory.type,
         subjectKey,
-        observation: input,
-        source: input.source ?? null,
+        observation: toMemoryDraftInput(input),
+        source,
         reason: decision.reason,
         now,
       })
@@ -910,7 +1041,13 @@ export class MemoryService {
     })
 
     if ('memory' in result) {
-      this.scheduleEagerEmbedding(result.memory)
+      const memory = result.memory as MemoryEntity
+      this.scheduleEagerEmbedding(memory)
+
+      return {
+        ...result,
+        memory: this.enrichMemoryDtos([memory])[0]!,
+      } as ApplyMemoryResult
     }
 
     return result
@@ -941,7 +1078,7 @@ export class MemoryService {
       const returnedItems = this.persistSearchRetrievalState(finalItems, now)
 
       return {
-        items: returnedItems,
+        items: this.enrichMemoryDtos(returnedItems),
         total: exactItems.length,
         matchMode: 'exact',
         requestedMatchMode: 'exact',
@@ -970,7 +1107,7 @@ export class MemoryService {
       const returnedItems = this.persistSearchRetrievalState(finalItems, now)
 
       return {
-        items: returnedItems,
+        items: this.enrichMemoryDtos(returnedItems),
         total: exactItems.length,
         matchMode: 'exact',
         requestedMatchMode,
@@ -999,7 +1136,7 @@ export class MemoryService {
     const returnedItems = this.persistSearchRetrievalState(finalItems, now)
 
     return {
-      items: returnedItems,
+      items: this.enrichMemoryDtos(returnedItems),
       total: items.length,
       matchMode: 'hybrid',
       requestedMatchMode: 'hybrid',
@@ -1025,7 +1162,7 @@ export class MemoryService {
     )
 
     return {
-      items: items.slice(0, limit),
+      items: this.enrichMemoryDtos(items.slice(0, limit)),
       total: items.length,
     }
   }
@@ -1094,7 +1231,7 @@ export class MemoryService {
       })
 
       return {
-        memory: deletedMemory,
+        memory: this.enrichMemoryDtos([deletedMemory])[0]!,
         event: toParsedEvent(event),
       }
     })
@@ -1127,6 +1264,7 @@ export class MemoryService {
     )
     const replacementOrigin = ensureMemoryOrigin(input.replacement.origin)
     const replacementSubjectKey = normalizeSubject(input.replacement.subject)
+    const source = validateObservationSource(input.source)
     if (!replacementSubjectKey) {
       throw new AppError('INVALID_SUBJECT', 'Replacement subject is empty after normalization.')
     }
@@ -1180,12 +1318,8 @@ export class MemoryService {
         scope: contradictedMemory.scope,
         type: contradictedMemory.type,
         subjectKey: contradictedMemory.subjectKey,
-        observation: {
-          ...input.replacement,
-          details: input.replacement.details ?? null,
-          source: input.source ?? null,
-        },
-        source: input.source ?? null,
+        observation: toMemoryDraftInput(input.replacement),
+        source,
         reason: toContradictionReason({
           replacementMemoryId: replacementMemory.id,
         }),
@@ -1198,21 +1332,22 @@ export class MemoryService {
         scope: replacementMemory.scope,
         type: replacementMemory.type,
         subjectKey: replacementMemory.subjectKey,
-        observation: {
-          ...input.replacement,
-          details: input.replacement.details ?? null,
-          source: input.source ?? null,
-        },
-        source: input.source ?? null,
+        observation: toMemoryDraftInput(input.replacement),
+        source,
         reason: toReplacementReason({
           oldMemoryId: contradictedMemory.id,
         }),
         now,
       })
 
-      return {
+      const [contradictedMemoryDto, replacementMemoryDto] = this.enrichMemoryDtos([
         contradictedMemory,
         replacementMemory,
+      ])
+
+      return {
+        contradictedMemory: contradictedMemoryDto,
+        replacementMemory: replacementMemoryDto,
         contradictedEvent: toParsedEvent(contradictedEvent),
         replacementEvent: toParsedEvent(replacementEvent),
       }

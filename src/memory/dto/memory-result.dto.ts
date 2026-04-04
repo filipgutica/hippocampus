@@ -1,21 +1,21 @@
-import type { GetPolicyResult } from '../dto/get-policy.dto.js'
-import type { SearchMatchMode } from '../dto/search-memories.dto.js'
+import type { GetPolicyResult } from './get-policy.dto.js'
+import type { SearchMatchMode } from './search-memories.dto.js'
 import type { ScopeRef, ScopeType } from '../../common/types/scope-ref.js'
 import type { ApplyMemoryDecision, MemoryType } from '../memory.types.js'
-import type { MemoryRecord } from './memory-record.js'
-import type { ParsedMemoryEventRecord } from './memory-event-record.js'
+import type { MemoryDto } from './memory.dto.js'
+import type { MemoryEventDto } from './memory-event.dto.js'
 
-export type MemoryGetResult = MemoryRecord & {
-  supersededByMemory: MemoryRecord | null
+export type MemoryGetResult = MemoryDto & {
+  supersededByMemory: MemoryDto | null
 }
 
 export type ApplyMemoryResult =
   | ApplyMemoryDecision
-  | { decision: 'create'; reason: string; policyVersion: string; memory: MemoryRecord }
-  | { decision: 'reinforce'; reason: string; policyVersion: string; memory: MemoryRecord }
+  | { decision: 'create'; reason: string; policyVersion: string; memory: MemoryDto }
+  | { decision: 'reinforce'; reason: string; policyVersion: string; memory: MemoryDto }
 
 export type SearchResult = {
-  items: MemoryRecord[]
+  items: MemoryDto[]
   total: number
   matchMode: SearchMatchMode
   requestedMatchMode: SearchMatchMode
@@ -24,7 +24,7 @@ export type SearchResult = {
 }
 
 export type MemoryListResult = {
-  items: MemoryRecord[]
+  items: MemoryDto[]
   total: number
 }
 
@@ -32,25 +32,25 @@ export type ArchiveStaleMemoriesResult = {
   dryRun: boolean
   olderThanDays: number | null
   cutoffByScope: Record<ScopeType, string>
-  items: MemoryRecord[]
+  items: MemoryDto[]
   total: number
 }
 
 export type MemoryHistoryResult = {
-  items: ParsedMemoryEventRecord[]
+  items: MemoryEventDto[]
   total: number
 }
 
 export type DeleteMemoryResult = {
-  memory: MemoryRecord
-  event: ParsedMemoryEventRecord
+  memory: MemoryDto
+  event: MemoryEventDto
 }
 
 export type ContradictMemoryResult = {
-  contradictedMemory: MemoryRecord
-  replacementMemory: MemoryRecord
-  contradictedEvent: ParsedMemoryEventRecord
-  replacementEvent: ParsedMemoryEventRecord
+  contradictedMemory: MemoryDto
+  replacementMemory: MemoryDto
+  contradictedEvent: MemoryEventDto
+  replacementEvent: MemoryEventDto
 }
 
 export type MaintenanceFlushEntry = {

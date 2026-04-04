@@ -279,11 +279,13 @@ describe('runCli', () => {
         status: string
         origin: string
         supersededByMemory: unknown
+        latestEventSummary: { eventType: string; createdAt: string; source: { channel: string } | null } | null
       }
       expect(inspectResult.id).toBe(memoryId)
       expect(inspectResult.status).toBe('active')
       expect(inspectResult.origin).toBe('explicit_user_statement')
       expect(inspectResult.supersededByMemory).toBeNull()
+      expect(inspectResult.latestEventSummary?.eventType).toBe('created')
 
       const historyIo = createIo()
       await runCli(['memories', 'history', '--id', memoryId!, '--json'], historyIo.io)
@@ -731,6 +733,7 @@ describe('runCli', () => {
             subject: 'Use package-local scripts',
             statement: 'Use package-local scripts in this subdirectory.',
             origin: 'tool_observation',
+            source: { channel: 'mcp', agent: 'codex', sessionId: 'session-1' },
           },
         })
 

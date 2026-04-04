@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { MemoryEmbeddingRecord } from './models/memory-embedding-record.js'
+import type { MemoryEmbeddingEntity } from './entities/memory-embedding.entity.js'
 
 type MemoryEmbeddingRow = {
   memory_id: string
@@ -10,7 +10,7 @@ type MemoryEmbeddingRow = {
   updated_at: string
 }
 
-const toRecord = (row: MemoryEmbeddingRow): MemoryEmbeddingRecord => ({
+const toRecord = (row: MemoryEmbeddingRow): MemoryEmbeddingEntity => ({
   memoryId: row.memory_id,
   modelId: row.model_id,
   modelFingerprint: row.model_fingerprint,
@@ -26,7 +26,7 @@ export class MemoryEmbeddingRepository {
     this.db = db
   }
 
-  getByMemoryId(memoryId: string): MemoryEmbeddingRecord | null {
+  getByMemoryId(memoryId: string): MemoryEmbeddingEntity | null {
     const row = this.db
       .prepare(
         `
@@ -48,7 +48,7 @@ export class MemoryEmbeddingRepository {
     embeddingJson: string
     sourceTextHash: string
     updatedAt: string
-  }): MemoryEmbeddingRecord {
+  }): MemoryEmbeddingEntity {
     this.db
       .prepare(
         `

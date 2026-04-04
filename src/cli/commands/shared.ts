@@ -11,10 +11,10 @@ import type {
   MemoryHistoryResult,
   MemoryListResult,
   SearchResult,
-} from '../../memory/models/memory-result.js'
+} from '../../memory/dto/memory-result.dto.js'
 import type { GetPolicyResult } from '../../memory/dto/get-policy.dto.js'
-import type { MemoryRecord } from '../../memory/models/memory-record.js'
-import type { MemoryGetResult } from '../../memory/models/memory-result.js'
+import type { MemoryEntity } from '../../memory/entities/memory.entity.js'
+import type { MemoryGetResult } from '../../memory/dto/memory-result.dto.js'
 
 export type CliResult = {
   code: number
@@ -93,7 +93,7 @@ export const writeOutput = (io: CliIO, payload: unknown, json = false): void => 
 export const resolveObservationSource = (input: Partial<ApplyObservationInput>): ApplyObservationInput['source'] =>
   input.source ?? null
 
-const formatMemory = (memory: MemoryRecord): string =>
+const formatMemory = (memory: MemoryEntity): string =>
   [
     `id: ${memory.id}`,
     `scope: ${memory.scope.type}:${memory.scope.id}`,
@@ -291,7 +291,7 @@ export const formatPolicyResult = (result: GetPolicyResult): string =>
     ]),
   ].join('\n')
 
-export const formatMemoryRecord = (memory: MemoryGetResult): string =>
+export const formatMemoryGetResult = (memory: MemoryGetResult): string =>
   memory.supersededByMemory
     ? [formatMemory(memory), '', 'supersededByMemory:', '', formatMemory(memory.supersededByMemory)].join('\n')
     : formatMemory(memory)

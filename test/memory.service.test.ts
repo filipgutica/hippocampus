@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppError } from '../src/common/errors.js'
 import { initializeDatabase } from '../src/common/db/db.js'
@@ -120,6 +121,40 @@ const getStoredMemoryState = (
     updated_at: string
   }
 
+const insertMemoryEventRow = (
+  db: ReturnType<typeof initializeDatabase>,
+  input: {
+    memoryId: string
+    eventType: 'created' | 'reinforced' | 'rejected' | 'contradicted' | 'archived' | 'deleted'
+    scope: ScopeRef
+    type: string
+    subjectKey: string
+    observationJson: string
+    sourceJson: string | null
+    reason: string
+    createdAt: string
+  },
+): void => {
+  db.prepare(
+    [
+      'INSERT INTO memory_events (id, memory_id, event_type, scope_type, scope_id, memory_type, subject_key, observation_json, source_json, reason, created_at)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ].join(' '),
+  ).run(
+    randomUUID(),
+    input.memoryId,
+    input.eventType,
+    input.scope.type,
+    input.scope.id,
+    input.type,
+    input.subjectKey,
+    input.observationJson,
+    input.sourceJson,
+    input.reason,
+    input.createdAt,
+  )
+}
+
 describe('MemoryService', () => {
   it('classifies, promotes, contradicts, and deletes scoped memories', async () => {
     const { db, service } = createService()
@@ -216,24 +251,43 @@ describe('MemoryService', () => {
     expect(search.items[0]?.reinforcementCount).toBe(3)
     expect(search.items[0]?.status).toBe('active')
     expect(search.items[0]?.origin).toBe('explicit_user_statement')
+    expect(search.items[0]?.latestEventSummary?.eventType).toBe('reinforced')
+    expect(search.items[0]?.latestEventSummary?.source).toEqual({ channel: 'cli' })
     expect(list.total).toBe(1)
+    expect(list.items[0]?.latestEventSummary?.eventType).toBe('reinforced')
     expect(memory.status).toBe('active')
     expect(memory.supersededByMemory).toBeNull()
+    expect(memory.latestEventSummary?.eventType).toBe('reinforced')
+    expect(memory.latestEventSummary?.source).toEqual({ channel: 'cli' })
+    expect(historyBeforeDelete.items[0]?.observation).toEqual({
+      scope,
+      type: 'preference',
+      subject: ' Prefer pnpm ',
+      statement: 'Use pnpm for this repo.',
+      origin: 'observed_pattern',
+      details: null,
+    })
+    expect(historyBeforeDelete.items[0]?.observation).not.toHaveProperty('source')
     expect(historyBeforeDelete.items.map(item => item.eventType)).toEqual(['created', 'reinforced', 'reinforced'])
     expect(contradicted.contradictedMemory.status).toBe('suppressed')
     expect(contradicted.contradictedMemory.supersededBy).toBe(contradicted.replacementMemory.id)
     expect(contradicted.contradictedEvent.eventType).toBe('contradicted')
     expect(contradicted.replacementMemory.status).toBe('active')
     expect(contradicted.replacementEvent.eventType).toBe('created')
+    expect(contradicted.contradictedMemory.latestEventSummary?.eventType).toBe('contradicted')
+    expect(contradicted.replacementMemory.latestEventSummary?.eventType).toBe('created')
     expect(contradictedInspect.supersededBy).toBe(contradicted.replacementMemory.id)
     expect(contradictedInspect.supersededByMemory?.id).toBe(contradicted.replacementMemory.id)
+    expect(contradictedInspect.latestEventSummary?.eventType).toBe('contradicted')
     expect(replacementInspect.supersededByMemory).toBeNull()
+    expect(replacementInspect.latestEventSummary?.eventType).toBe('created')
     expect(searchAfterContradiction.total).toBe(0)
     expect(replacementSearch.total).toBe(1)
     expect(deleted.memory.status).toBe('deleted')
     expect(deleted.memory.deletedAt).not.toBeNull()
     expect(deleted.event.eventType).toBe('deleted')
     expect(deleted.event.source).toEqual({ channel: 'cli' })
+    expect(deleted.memory.latestEventSummary?.eventType).toBe('deleted')
     expect(historyAfterDelete.items.map(item => item.eventType)).toEqual(['created', 'deleted'])
     expect(searchAfterDelete.total).toBe(0)
     expect(listAfterDelete.total).toBe(0)
@@ -409,6 +463,168 @@ describe('MemoryService', () => {
     expect(state.retrieval_count).toBe(0)
     expect(state.last_retrieved_at).toBeNull()
     expect(state.strength).toBe(1)
+
+    db.close()
+  })
+
+  it('fails when stored event observation JSON is malformed', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    insertMemoryEventRow(db, {
+      memoryId: created.memory.id,
+      eventType: 'reinforced',
+      scope,
+      type: created.memory.type,
+      subjectKey: created.memory.subjectKey,
+      observationJson: 'not-json',
+      sourceJson: JSON.stringify({ channel: 'cli' }),
+      reason: 'corrupt observation payload',
+      createdAt: new Date().toISOString(),
+    })
+
+    expect(() => service.getMemoryHistory({ id: created.memory.id })).toThrow()
+
+    db.close()
+  })
+
+  it('fails when stored event source JSON is malformed on history and latest-event reads', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    insertMemoryEventRow(db, {
+      memoryId: created.memory.id,
+      eventType: 'reinforced',
+      scope,
+      type: created.memory.type,
+      subjectKey: created.memory.subjectKey,
+      observationJson: JSON.stringify({
+        scope,
+        type: created.memory.type,
+        subject: created.memory.subject,
+        statement: created.memory.statement,
+        origin: created.memory.origin,
+        details: created.memory.details,
+      }),
+      sourceJson: 'not-json',
+      reason: 'corrupt source payload',
+      createdAt: new Date().toISOString(),
+    })
+
+    expect(() => service.getMemoryHistory({ id: created.memory.id })).toThrow()
+    expect(() => service.getMemory({ id: created.memory.id })).toThrow()
+    await expect(
+      service.searchMemories({
+        scope,
+        subject: 'prefer pnpm',
+        matchMode: 'exact',
+        limit: 10,
+      }),
+    ).rejects.toThrow()
+
+    db.close()
+  })
+
+  it('fails when stored event source JSON uses legacy runId provenance', async () => {
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    insertMemoryEventRow(db, {
+      memoryId: created.memory.id,
+      eventType: 'reinforced',
+      scope,
+      type: created.memory.type,
+      subjectKey: created.memory.subjectKey,
+      observationJson: JSON.stringify({
+        scope,
+        type: created.memory.type,
+        subject: created.memory.subject,
+        statement: created.memory.statement,
+        origin: created.memory.origin,
+        details: created.memory.details,
+      }),
+      sourceJson: JSON.stringify({
+        channel: 'mcp',
+        agent: 'codex',
+        runId: 'legacy-session',
+      }),
+      reason: 'legacy source payload',
+      createdAt: new Date().toISOString(),
+    })
+
+    expect(() => service.getMemoryHistory({ id: created.memory.id })).toThrow()
+    expect(() => service.getMemory({ id: created.memory.id })).toThrow()
+
+    db.close()
+  })
+
+  it('uses insertion order when latest events share the same timestamp', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, service } = createService()
+    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const created = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    const reinforced = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    expect(reinforced.decision).toBe('reinforce')
+    expect(service.getMemory({ id: created.memory.id }).latestEventSummary?.eventType).toBe('reinforced')
+    expect(service.listMemories({ scope, limit: 10 }).items[0]?.latestEventSummary?.eventType).toBe('reinforced')
 
     db.close()
   })
@@ -1512,6 +1728,101 @@ describe('MemoryService', () => {
     ).rejects.toThrow('Limit must be a positive integer.')
     expect(service.getMemory({ id: created.memory.id }).status).toBe('active')
     expect(service.getMemoryHistory({ id: created.memory.id }).items.map(item => item.eventType)).toEqual(['created'])
+    expect(memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()).toBe(initialSweepAt)
+
+    db.close()
+  })
+
+  it('does not auto-archive stale memories when applyObservation provenance is invalid', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, memoryRuntimeStateRepository, service } = createService()
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
+    const created = service.applyObservation({
+      scope,
+      type: 'procedural',
+      subject: 'write tests first',
+      statement: 'Write tests first.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (created.decision !== 'create' || !('memory' in created)) {
+      throw new Error('Expected memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+    const initialSweepAt = memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
+
+    expect(() =>
+      service.applyObservation({
+        scope,
+        type: 'preference',
+        subject: 'prefer pnpm',
+        statement: 'Use pnpm for this repo.',
+        origin: 'explicit_user_statement',
+        source: { channel: 'mcp', agent: 'codex' } as never,
+      }),
+    ).toThrow()
+
+    expect(service.getMemory({ id: created.memory.id }).status).toBe('active')
+    expect(service.getMemoryHistory({ id: created.memory.id }).items.map(item => item.eventType)).toEqual(['created'])
+    expect(memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()).toBe(initialSweepAt)
+
+    db.close()
+  })
+
+  it('does not auto-archive stale memories when contradictMemory provenance is invalid', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+
+    const { db, memoryRuntimeStateRepository, service } = createService()
+    const scope: ScopeRef = { type: 'user', id: 'default-user' }
+    const stale = service.applyObservation({
+      scope,
+      type: 'procedural',
+      subject: 'write tests first',
+      statement: 'Write tests first.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const target = service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this repo.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    if (stale.decision !== 'create' || !('memory' in stale)) {
+      throw new Error('Expected stale memory creation.')
+    }
+    if (target.decision !== 'create' || !('memory' in target)) {
+      throw new Error('Expected target memory creation.')
+    }
+
+    vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
+    const initialSweepAt = memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
+
+    expect(() =>
+      service.contradictMemory({
+        id: target.memory.id,
+        replacement: {
+          scope,
+          type: 'preference',
+          subject: 'prefer npm',
+          statement: 'Use npm for this repo.',
+          origin: 'explicit_user_statement',
+          details: null,
+        },
+        source: { channel: 'mcp', agent: 'codex' } as never,
+      }),
+    ).toThrow()
+
+    expect(service.getMemory({ id: stale.memory.id }).status).toBe('active')
+    expect(service.getMemoryHistory({ id: stale.memory.id }).items.map(item => item.eventType)).toEqual(['created'])
     expect(memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()).toBe(initialSweepAt)
 
     db.close()

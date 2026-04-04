@@ -1,4 +1,4 @@
-export type MemoryEmbeddingRecord = {
+export type MemoryEmbeddingEntity = {
   memoryId: string
   modelId: string
   modelFingerprint: string

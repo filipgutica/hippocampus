@@ -13,7 +13,7 @@ hippocampus/
 │   ├── app/               # App container factory and initialisation
 │   ├── cli/               # CLI command handlers and setup tooling
 │   ├── mcp/               # MCP server, tools, and resources
-│   ├── memory/            # Core memory domain: service, repositories, models, policies, search
+│   ├── memory/            # Core memory domain: service, repositories, entities, DTOs, policies, search
 │   ├── common/            # Database init, migrations, shared utilities
 │   ├── guidance/          # Guidance catalog (policy + scope skill)
 │   └── repos/             # Repo scope resolution helpers
@@ -98,7 +98,7 @@ Started via `hippo mcp serve`. Registers 7 tools and 2 resources, then reads/wri
 
 End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 
-1. **Input** — CLI args are parsed into `ApplyObservationInput` (scope, type, subject, statement, origin, details, source). MCP input goes through the same DTO.
+1. **Input** — CLI args are parsed into `ApplyObservationInput` (scope, type, subject, statement, origin, details, source). MCP mutation tools require `source = { channel: 'mcp', agent: 'codex' | 'claude', sessionId }`; CLI writes continue to use `{ channel: 'cli' }`.
 
 2. **`MemoryService.applyObservation()`** (`src/memory/memory.service.ts`):
    - Canonicalises the scope (resolves repo paths to absolute)
@@ -109,12 +109,17 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 3. **Database transaction**:
    - Insert into `memories` (create) or update `reinforcement_count` + `strength` (reinforce)
    - Insert into `memory_events` (always — immutable audit record)
+   - Event payloads are runtime-validated before `observationJson` / `sourceJson` are serialized
 
 4. **Eager embedding** — after the transaction commits, `scheduleEagerEmbedding()` enqueues embedding generation as a microtask (`queueMicrotask`) via `LocalEmbeddingProvider`. The model (`Xenova/bge-small-en-v1.5`) runs locally; its cache lives at `$HIPPOCAMPUS_HOME/cache/transformers/`.
 
 ---
 
 ## Memory model
+
+`src/memory/entities/` contains DB-mapped shapes only. `MemoryEntity` mirrors the `memories` table, and `MemoryEventEntity` mirrors the `memory_events` table with raw `observationJson` and `sourceJson` columns.
+
+`src/memory/dto/` contains transport shapes. `MemoryDto` is the outward memory contract returned by search/list/get and carries `latestEventSummary`. `MemoryEventDto` is the parsed event-history contract returned by `memory-get-history`.
 
 Key columns on a memory record (`memories` table):
 
@@ -136,6 +141,22 @@ Key columns on a memory record (`memories` table):
 | `last_reinforced_at` | TEXT | ISO timestamp |
 | `last_retrieved_at` | TEXT | ISO timestamp |
 | `superseded_by` | TEXT | FK to replacement memory (contradictions) |
+
+### Event lifecycle
+
+Memory events are created only on these state transitions:
+
+| Path | Event(s) emitted |
+|---|---|
+| `applyObservation()` reject branch | `rejected` |
+| `applyObservation()` create branch | `created` |
+| `applyObservation()` reinforce branch | `reinforced` |
+| `archiveStaleMemories()` | `archived` |
+| `contradictMemory()` old memory | `contradicted` |
+| `contradictMemory()` replacement memory | `created` |
+| `deleteMemory()` | `deleted` |
+
+`memory-get-history` returns parsed `MemoryEventDto[]` with structured `observation` and `source`. Search/list/get do not return full event arrays; they return `MemoryDto` objects with a compact `latestEventSummary` derived from the newest event for each memory.
 
 ---
 

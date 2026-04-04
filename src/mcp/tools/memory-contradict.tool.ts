@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { normalizeWhitespace } from '../../common/utils.js'
+import { mcpObservationSourceSchema } from '../../memory/dto/apply-observation.dto.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 import { MEMORY_ORIGINS, MEMORY_TYPES } from '../../memory/memory.types.js'
 import { mcpScopeSchema } from './scope.schema.js'
@@ -19,6 +20,7 @@ export const registerMemoryContradictTool = (server: McpServer, memoryService: M
       `),
       inputSchema: {
         id: z.string().min(1),
+        source: mcpObservationSourceSchema,
         replacement: z.object({
           scope: mcpScopeSchema,
           type: z.enum(MEMORY_TYPES),
@@ -40,7 +42,7 @@ export const registerMemoryContradictTool = (server: McpServer, memoryService: M
           origin: input.replacement.origin,
           details: input.replacement.details ?? null,
         },
-        source: { channel: 'mcp' },
+        source: input.source,
       })
 
       return {

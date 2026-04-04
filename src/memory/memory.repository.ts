@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
-import type { MemoryRecord } from './models/memory-record.js'
+import type { MemoryEntity } from './entities/memory.entity.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from './memory.types.js'
 
 type MemoryRow = {
@@ -28,7 +28,7 @@ type MemoryRow = {
   deleted_at: string | null
 }
 
-const toRecord = (row: MemoryRow): MemoryRecord => ({
+const toRecord = (row: MemoryRow): MemoryEntity => ({
   id: row.id,
   scope: { type: row.scope_type as ScopeRef['type'], id: row.scope_id },
   type: row.memory_type,
@@ -57,7 +57,7 @@ export class MemoryRepository {
     this.db = db
   }
 
-  findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): MemoryRecord | null {
+  findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): MemoryEntity | null {
     const row = this.db
       .prepare(
         `
@@ -89,7 +89,7 @@ export class MemoryRepository {
     strength?: number
     supersededBy?: string | null
     now: string
-  }): MemoryRecord {
+  }): MemoryEntity {
     const id = input.id ?? randomUUID()
     const reinforcementCount = input.reinforcementCount ?? 1
     const retrievalCount = input.retrievalCount ?? 0
@@ -154,7 +154,7 @@ export class MemoryRepository {
   }
 
   reinforce(input: {
-    memory: MemoryRecord
+    memory: MemoryEntity
     statement: string
     details?: string | null
     origin: MemoryOrigin
@@ -162,7 +162,7 @@ export class MemoryRepository {
     reinforcementCount: number
     policyVersion: string
     now: string
-  }): MemoryRecord {
+  }): MemoryEntity {
     const next = {
       ...input.memory,
       statement: input.statement,
@@ -205,7 +205,7 @@ export class MemoryRepository {
     scope: ScopeRef
     type?: MemoryType | null
     subject?: string | null
-  }): MemoryRecord[] {
+  }): MemoryEntity[] {
     const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
     const params: Array<string> = [input.scope.type, input.scope.id]
 
@@ -230,7 +230,7 @@ export class MemoryRepository {
     scope: ScopeRef
     type?: MemoryType | null
     query: string
-  }): MemoryRecord[] {
+  }): MemoryEntity[] {
     const clauses = [
       'm.scope_type = ?',
       'm.scope_id = ?',
@@ -288,7 +288,7 @@ export class MemoryRepository {
     scope: ScopeRef
     type?: MemoryType | null
     limit?: number | null
-  }): MemoryRecord[] {
+  }): MemoryEntity[] {
     const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
     const params: Array<string | number> = [input.scope.type, input.scope.id]
 
@@ -314,7 +314,7 @@ export class MemoryRepository {
   listStaleMemories(input: {
     cutoffByScope: Record<ScopeType, string>
     limit?: number | null
-  }): MemoryRecord[] {
+  }): MemoryEntity[] {
     const params: Array<string | number> = [
       input.cutoffByScope.user,
       input.cutoffByScope.repo,
@@ -361,7 +361,7 @@ export class MemoryRepository {
     scope?: ScopeRef | null
     floor: number
     limit: number
-  }): MemoryRecord[] {
+  }): MemoryEntity[] {
     const clauses = ["status = 'active'", 'last_retrieved_at IS NOT NULL', 'strength > ?']
     const params: Array<string | number> = [input.floor]
 
@@ -402,17 +402,17 @@ export class MemoryRepository {
       .run(input.strength, input.now, input.id)
   }
 
-  getById(id: string): MemoryRecord | null {
+  getById(id: string): MemoryEntity | null {
     const row = this.db.prepare('SELECT * FROM memories WHERE id = ? LIMIT 1').get(id) as MemoryRow | undefined
 
     return row ? toRecord(row) : null
   }
 
   softDelete(input: {
-    memory: MemoryRecord
+    memory: MemoryEntity
     now: string
-  }): MemoryRecord {
-    const next: MemoryRecord = {
+  }): MemoryEntity {
+    const next: MemoryEntity = {
       ...input.memory,
       status: 'deleted',
       updatedAt: input.now,
@@ -435,7 +435,7 @@ export class MemoryRepository {
   archiveMemoryIfLive(input: {
     id: string
     now: string
-  }): MemoryRecord | null {
+  }): MemoryEntity | null {
     const result = this.db
       .prepare(
         `
@@ -459,13 +459,13 @@ export class MemoryRepository {
   }
 
   updateRetrievalState(input: {
-    memory: MemoryRecord
+    memory: MemoryEntity
     retrievalCount: number
     lastRetrievedAt: string | null
     strength: number
     now: string
-  }): MemoryRecord {
-    const next: MemoryRecord = {
+  }): MemoryEntity {
+    const next: MemoryEntity = {
       ...input.memory,
       retrievalCount: input.retrievalCount,
       lastRetrievedAt: input.lastRetrievedAt,
@@ -486,10 +486,10 @@ export class MemoryRepository {
   }
 
   suppress(input: {
-    memory: MemoryRecord
+    memory: MemoryEntity
     now: string
-  }): MemoryRecord {
-    const next: MemoryRecord = {
+  }): MemoryEntity {
+    const next: MemoryEntity = {
       ...input.memory,
       status: 'suppressed',
       updatedAt: input.now,
@@ -509,11 +509,11 @@ export class MemoryRepository {
   }
 
   setSupersededBy(input: {
-    memory: MemoryRecord
+    memory: MemoryEntity
     supersededBy: string
     now: string
-  }): MemoryRecord {
-    const next: MemoryRecord = {
+  }): MemoryEntity {
+    const next: MemoryEntity = {
       ...input.memory,
       supersededBy: input.supersededBy,
       updatedAt: input.now,

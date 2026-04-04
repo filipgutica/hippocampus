@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { mcpObservationSourceSchema } from '../../memory/dto/apply-observation.dto.js'
 import type { MemoryService } from '../../memory/memory.service.js'
 
 // Kept for future admin/debug MCP profiles. The default MCP server intentionally
@@ -11,12 +12,13 @@ export const registerMemoryDeleteTool = (server: McpServer, memoryService: Memor
       description: 'Soft delete a stored memory by id.',
       inputSchema: {
         id: z.string().min(1),
+        source: mcpObservationSourceSchema,
       },
     },
     async input => {
       const result = memoryService.deleteMemory({
         id: input.id,
-        source: { channel: 'mcp' },
+        source: input.source,
       })
 
       return {

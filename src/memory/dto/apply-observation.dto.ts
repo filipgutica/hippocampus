@@ -1,19 +1,45 @@
+import { z } from 'zod'
 import type { ScopeRef } from '../../common/types/scope-ref.js'
-import type { MemoryOrigin, MemoryType } from '../memory.types.js'
+import { MEMORY_ORIGINS, MEMORY_TYPES } from '../memory.types.js'
 
-export type ObservationSource = {
-  channel: 'cli' | 'mcp'
-  agent?: string
-  runId?: string
-}
+const scopeRefSchema = z
+  .object({
+    type: z.enum(['user', 'repo', 'org']),
+    id: z.string().min(1),
+  })
+  .strict()
 
-export type MemoryDraftInput = {
+export const cliObservationSourceSchema = z
+  .object({
+    channel: z.literal('cli'),
+  })
+  .strict()
+
+export const mcpObservationSourceSchema = z
+  .object({
+    channel: z.literal('mcp'),
+    agent: z.enum(['codex', 'claude']),
+    sessionId: z.string().min(1),
+  })
+  .strict()
+
+export const observationSourceSchema = z.union([cliObservationSourceSchema, mcpObservationSourceSchema])
+
+export const memoryDraftInputSchema = z
+  .object({
+    scope: scopeRefSchema,
+    type: z.enum(MEMORY_TYPES),
+    subject: z.string().min(1),
+    statement: z.string().min(1),
+    origin: z.enum(MEMORY_ORIGINS),
+    details: z.string().nullable().optional(),
+  })
+  .strict()
+
+export type ObservationSource = z.infer<typeof observationSourceSchema>
+
+export type MemoryDraftInput = z.infer<typeof memoryDraftInputSchema> & {
   scope: ScopeRef
-  type: MemoryType
-  subject: string
-  statement: string
-  origin: MemoryOrigin
-  details?: string | null
 }
 
 export type ApplyObservationInput = MemoryDraftInput & {

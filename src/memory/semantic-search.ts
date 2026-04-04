@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
-import type { MemoryRecord } from './models/memory-record.js'
+import type { MemoryEntity } from './entities/memory.entity.js'
 
 const norm = (value: string | null | undefined): string | null => {
   const trimmed = value?.trim() ?? ''
   return trimmed ? trimmed : null
 }
 
-export const getSemanticSourceText = (memory: MemoryRecord): string =>
+export const getSemanticSourceText = (memory: MemoryEntity): string =>
   [norm(memory.type), norm(memory.subject), norm(memory.statement), norm(memory.details)].filter(Boolean).join('\n')
 
 export const getSourceTextHash = (value: string): string => createHash('sha256').update(value).digest('hex')

@@ -1,9 +1,9 @@
-import type { MemoryRecord } from '../models/memory-record.js'
+import type { MemoryEntity } from '../entities/memory.entity.js'
 
 /**
  * Orders two memories by reinforcement first, then recency, then subject text for stable ties.
  */
-export const compareMemoryRank = (left: MemoryRecord, right: MemoryRecord): number => {
+export const compareMemoryRank = (left: MemoryEntity, right: MemoryEntity): number => {
   if (right.reinforcementCount !== left.reinforcementCount) {
     return right.reinforcementCount - left.reinforcementCount
   }
@@ -18,5 +18,5 @@ export const compareMemoryRank = (left: MemoryRecord, right: MemoryRecord): numb
 /**
  * Returns a new array sorted by the repository's ranking rules.
  */
-export const rankMemories = (items: MemoryRecord[]): MemoryRecord[] =>
+export const rankMemories = (items: MemoryEntity[]): MemoryEntity[] =>
   [...items].sort(compareMemoryRank)

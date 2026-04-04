@@ -14,6 +14,8 @@ describe('guidance artifacts', () => {
     expect(guidance).toContain('# Hippocampus Runtime Memory Policy')
     expect(guidance).toContain('Use this policy first when deciding whether to retrieve or save memory through Hippocampus.')
     expect(guidance).toContain('Use `memory-list` for broader recall with `scope + type`')
+    expect(guidance).toContain('## Bootstrap')
+    expect(guidance).toContain('At the start of every new thread, call `memory-get-policy` first.')
     expect(guidance).toContain('## Memory Types')
     expect(guidance).toContain('canonical absolute path to the repo root')
     expect(guidance).toContain('## Origin')

@@ -9,6 +9,13 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - Search before making assumptions about repository norms, user preferences, or durable environment facts.
 - Search only within the scope that is actually relevant to the current work.
 
+## Bootstrap
+- At the start of every new thread, call `memory-get-policy` first.
+- Then call `memory-list` for repo scope when the current work is in a repository.
+- Then call `memory-list` for user scope to prime durable personal preferences and habits.
+- If the topic is clear and durable, call `memory-search` before making assumptions.
+- Skip the bootstrap only when the thread is clearly ephemeral or Hippocampus is unavailable.
+
 ## When not to search memory
 - Do not search for broad brainstorming, open-ended fishing, or facts that should come from the codebase or current task context.
 - Do not search when the answer is already obvious from the current files, command output, or user instruction.

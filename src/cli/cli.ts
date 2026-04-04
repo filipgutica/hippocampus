@@ -17,6 +17,12 @@ import { runMemoriesHistoryCommand } from './commands/memories-history.command.j
 import { runMemoriesInspectCommand } from './commands/memories-inspect.command.js'
 import { runMemoriesListCommand } from './commands/memories-list.command.js'
 import { runSearchCommand } from './commands/search.command.js'
+import { runSetupClaudeCommand, runSetupCodexCommand, runSetupShellCommand } from './commands/setup.command.js'
+import {
+  runUninstallClaudeCommand,
+  runUninstallCodexCommand,
+  runUninstallShellCommand,
+} from './commands/uninstall.command.js'
 import { readJsonInput, resolveObservationSource, writeOutput, type CliIO, type CliResult } from './commands/shared.js'
 
 type JsonOption = {
@@ -245,6 +251,90 @@ const createParser = (argv: string[], io: CliIO) => {
         }
 
         result = await runMcpServeCommand(app)
+      },
+    })
+    .command({
+      command: 'setup <target> [rc-file]',
+      describe: 'Install proactive memory bootstrap wiring or local shell PATH setup.',
+      builder: parser =>
+        parser
+          .positional('target', {
+            type: 'string',
+            choices: ['claude', 'codex', 'shell'] as const,
+          })
+          .positional('rc-file', {
+            type: 'string',
+          })
+          .option('dry-run', {
+            type: 'boolean',
+            default: false,
+          }),
+      handler: async args => {
+        const target = args.target as 'claude' | 'codex' | 'shell'
+        const options = {
+          dryRun: Boolean(args.dryRun),
+        }
+
+        if (target === 'shell') {
+          if (typeof args.rcFile !== 'string' || args.rcFile.length === 0) {
+            throw new Error('setup shell requires <rc-file>.')
+          }
+
+          result = runSetupShellCommand(io, {
+            ...options,
+            rcFilePath: args.rcFile,
+          })
+          return
+        }
+
+        if (target === 'claude') {
+          result = runSetupClaudeCommand(io, options)
+          return
+        }
+
+        result = runSetupCodexCommand(io, options)
+      },
+    })
+    .command({
+      command: 'uninstall <target> [rc-file]',
+      describe: 'Remove proactive memory bootstrap wiring or local shell PATH setup.',
+      builder: parser =>
+        parser
+          .positional('target', {
+            type: 'string',
+            choices: ['claude', 'codex', 'shell'] as const,
+          })
+          .positional('rc-file', {
+            type: 'string',
+          })
+          .option('dry-run', {
+            type: 'boolean',
+            default: false,
+          }),
+      handler: async args => {
+        const target = args.target as 'claude' | 'codex' | 'shell'
+        const options = {
+          dryRun: Boolean(args.dryRun),
+        }
+
+        if (target === 'shell') {
+          if (typeof args.rcFile !== 'string' || args.rcFile.length === 0) {
+            throw new Error('uninstall shell requires <rc-file>.')
+          }
+
+          result = runUninstallShellCommand(io, {
+            ...options,
+            rcFilePath: args.rcFile,
+          })
+          return
+        }
+
+        if (target === 'claude') {
+          result = runUninstallClaudeCommand(io, options)
+          return
+        }
+
+        result = runUninstallCodexCommand(io, options)
       },
     })
     .command({

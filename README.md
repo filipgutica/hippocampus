@@ -64,6 +64,28 @@ codex mcp add hippo -- npx -y hippocampus mcp serve
 
 For other MCP-capable clients, configure the same command in the client’s MCP settings unless you have validated client-specific syntax separately.
 
+### Session Bootstrap
+
+Hippocampus can install proactive startup wiring for the two primary local agent clients:
+
+```bash
+hippo setup claude
+hippo setup codex
+hippo uninstall claude
+hippo uninstall codex
+```
+
+- `hippo setup claude` writes a `SessionStart` hook into `~/.claude/settings.json`
+- `hippo setup claude` also registers the Hippocampus MCP server in `~/.claude.json` when that entry is not already user-managed
+- `hippo setup codex` writes a `SessionStart` hook into `~/.codex/hooks.json`
+- `hippo setup codex` also registers the Hippocampus MCP server and enables Codex hooks in `~/.codex/config.toml` using an installer-owned managed block
+- `hippo uninstall claude` removes only the installer-owned Claude hook, MCP registration, and generated bootstrap script
+- `hippo uninstall codex` removes only the installer-owned Codex hook, managed MCP block, and generated bootstrap script
+- sibling hooks inside a shared `SessionStart` entry are preserved on setup and uninstall
+- Hippocampus will not overwrite an unmanaged `hippo` MCP entry; migrate or remove that config first
+- both install the same bootstrap text so sessions start with `memory-get-policy`, repo-scope `memory-list`, user-scope `memory-list`, and subject-based `memory-search` guidance
+- use `--dry-run` to preview the files before writing them
+
 Default MCP surface:
 
 - `memory-apply-observation`
@@ -114,11 +136,27 @@ node dist/index.js mcp serve
 Useful scripts:
 
 ```bash
+pnpm setup:shell -- ~/.zshrc
 pnpm start:cli -- get-policy --json
 pnpm start:mcp
 pnpm smoke:init
 pnpm smoke:mcp
 pnpm smoke:semantic
+```
+
+For local checkout development, add the built CLI to your shell `PATH` so `hippo` can be invoked from anywhere:
+
+```bash
+pnpm setup:shell -- ~/.zshrc
+source ~/.zshrc
+hippo uninstall shell ~/.zshrc
+```
+
+This appends a block like:
+
+```bash
+# hippo mcp
+export PATH="/absolute/path/to/hippocampus/dist:$PATH"
 ```
 
 ## Local Debugging

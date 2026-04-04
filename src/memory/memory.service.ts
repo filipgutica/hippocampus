@@ -82,6 +82,9 @@ const toPositiveLimit = (limit: number | null | undefined): number => {
   return Math.min(limit, 100)
 }
 
+/**
+ * Rehydrates a JSON column back into its typed in-memory representation.
+ */
 const parseStoredJson = <T>(value: string | null): T | null => {
   if (value == null) {
     return null
@@ -90,6 +93,9 @@ const parseStoredJson = <T>(value: string | null): T | null => {
   return JSON.parse(value) as T | null
 }
 
+/**
+ * Trims and validates a required string field before it reaches persistence.
+ */
 const ensureNonEmpty = (value: string, code: string, message: string): string => {
   const trimmed = value.trim()
   if (!trimmed) {
@@ -99,6 +105,9 @@ const ensureNonEmpty = (value: string, code: string, message: string): string =>
   return trimmed
 }
 
+/**
+ * Validates that a type string matches the supported memory taxonomy.
+ */
 const ensureMemoryType = (value: string): MemoryType => {
   if (memoryTypeDefinitions.some(definition => definition.value === value)) {
     return value as MemoryType
@@ -110,6 +119,9 @@ const ensureMemoryType = (value: string): MemoryType => {
   )
 }
 
+/**
+ * Validates that a source origin matches the supported provenance taxonomy.
+ */
 const ensureMemoryOrigin = (value: string): MemoryOrigin => {
   if (memoryOriginDefinitions.some(definition => definition.value === value)) {
     return value as MemoryOrigin
@@ -121,6 +133,9 @@ const ensureMemoryOrigin = (value: string): MemoryOrigin => {
   )
 }
 
+/**
+ * Validates that numeric inputs are positive integers before they affect query or batch sizing.
+ */
 const ensurePositiveInteger = ({ value, code, message }: { value: number; code: string; message: string }): number => {
   if (!Number.isInteger(value) || value < 1) {
     throw new AppError(code, message)
@@ -129,19 +144,31 @@ const ensurePositiveInteger = ({ value, code, message }: { value: number; code: 
   return value
 }
 
+/**
+ * Normalizes a scope ref to its canonical absolute identifier.
+ */
 const canonicalizeScope = (scope: ScopeRef): ScopeRef => ({
   type: scope.type,
   id: resolveCanonicalScopeId(scope.type, scope.id),
 })
 
+/**
+ * Builds the audit reason recorded when a memory is contradicted by a replacement.
+ */
 const toContradictionReason = ({ replacementMemoryId }: { replacementMemoryId: string }): string =>
   `Memory was contradicted and superseded by ${replacementMemoryId}.`
 
 const SEMANTIC_MIN_SCORE = 0.25
 
+/**
+ * Builds the audit reason recorded for the replacement memory created during contradiction.
+ */
 const toReplacementReason = ({ oldMemoryId }: { oldMemoryId: string }): string =>
   `Memory was created as the active replacement for contradicted memory ${oldMemoryId}.`
 
+/**
+ * Formats archive reasons for both operator sweeps and automatic sweeps.
+ */
 const toArchiveReason = ({
   olderThanDays,
   automatic,
@@ -157,12 +184,18 @@ const toArchiveReason = ({
       ? `Memory was archived automatically after ${olderThanDays} days without reinforcement or retrieval.`
       : `Memory was archived by operator sweep after ${olderThanDays} days without reinforcement or retrieval.`
 
+/**
+ * Returns a UTC timestamp shifted backward by the requested number of days.
+ */
 const subtractDays = ({ timestamp, days }: { timestamp: string; days: number }): string => {
   const date = new Date(timestamp)
   date.setUTCDate(date.getUTCDate() - days)
   return date.toISOString()
 }
 
+/**
+ * Checks whether the auto-archive sweep is allowed to run again.
+ */
 const hasAutoArchiveCooldownExpired = ({
   now,
   lastSweepAt,
@@ -192,6 +225,9 @@ type ScopeCutoffMap = Record<ScopeType, string>
 
 const scopeTypes: ScopeType[] = ['user', 'repo', 'org']
 
+/**
+ * Normalizes a database event row into the parsed event model used by the API.
+ */
 const toParsedEvent = (event: {
   id: string
   memoryId: string | null
@@ -216,16 +252,25 @@ const toParsedEvent = (event: {
   createdAt: event.createdAt,
 })
 
+/**
+ * Falls back to hybrid retrieval when the caller does not request a specific search mode.
+ */
 const toMatchMode = (value: SearchMatchMode | null | undefined): SearchMatchMode => value ?? 'hybrid'
 
 const isSemanticModelUnavailableError = (error: unknown): error is AppError =>
   error instanceof AppError && error.code === 'SEMANTIC_MODEL_NOT_AVAILABLE'
 
+/**
+ * Explains why the search path fell back to exact matching only.
+ */
 const toSearchFallbackReason = (error: unknown): string => {
   const message = error instanceof Error ? error.message : 'unknown error'
   return `Semantic retrieval unavailable; returned exact results only. ${message}`
 }
 
+/**
+ * Orders exact-search candidates by effective retrieval strength and then stable rank.
+ */
 const compareSearchMemories = ({
   left,
   right,
@@ -253,6 +298,9 @@ const compareSearchMemories = ({
   return compareMemoryRank(left, right)
 }
 
+/**
+ * Orders semantic candidates by score first, then by the same retrieval/rank tie-breakers.
+ */
 const compareScoredMemories = ({
   left,
   right,
@@ -280,6 +328,9 @@ export class MemoryService {
     this.deps = deps
   }
 
+  /**
+   * Expands a memory response so contradicted memories include their replacement record.
+   */
   private createMemoryGetResult(memory: MemoryRecord): MemoryGetResult {
     if (!memory.supersededBy) {
       return {
@@ -302,6 +353,9 @@ export class MemoryService {
     }
   }
 
+  /**
+   * Loads a memory and rejects edits when it has already been deleted or superseded.
+   */
   private assertMemoryEditable(id: string): MemoryRecord {
     const memory = this.deps.memoryRepository.getById(id)
     if (!memory) {
@@ -316,6 +370,9 @@ export class MemoryService {
     return memory
   }
 
+  /**
+   * Triggers a bounded stale-memory sweep when the runtime cooldown has expired.
+   */
   private maybeArchiveStaleMemories(): void {
     const now = new Date().toISOString()
     const lastSweepAt = this.deps.memoryRuntimeStateRepository.getLastAutoArchiveSweepAt()
@@ -337,6 +394,9 @@ export class MemoryService {
     })
   }
 
+  /**
+   * Flushes decay-adjusted retrieval strength for a bounded maintenance batch.
+   */
   runMaintenance(input: {
     scope?: ScopeRef | null
     batchSize?: number | null
@@ -421,6 +481,9 @@ export class MemoryService {
     }
   }
 
+  /**
+   * Archives memories that are stale for their scope, optionally as a dry run.
+   */
   archiveStaleMemories(input: ArchiveStaleMemoriesInput = {}): ArchiveStaleMemoriesResult {
     const olderThanDays =
       input.olderThanDays == null
@@ -542,6 +605,9 @@ export class MemoryService {
     })
   }
 
+  /**
+   * Refreshes the cached embedding for a memory when its source text or model fingerprint changes.
+   */
   private async ensureMemoryEmbedding(memory: MemoryRecord, modelFingerprint: string): Promise<number[]> {
     const sourceText = getSemanticSourceText(memory)
     const sourceTextHash = getSourceTextHash(sourceText)
@@ -570,6 +636,9 @@ export class MemoryService {
     return embedding
   }
 
+  /**
+   * Scores semantic candidates using FTS shortcuts when possible, otherwise falls back to a full scan.
+   */
   private async searchBySemanticSimilarity(input: {
     scope: ScopeRef
     type: MemoryType | null
@@ -606,6 +675,9 @@ export class MemoryService {
     return this.searchBySemanticSimilarityFromFullScan(input)
   }
 
+  /**
+   * Scores every candidate memory when the FTS shortcut is not sufficient.
+   */
   private async searchBySemanticSimilarityFromFullScan(input: {
     scope: ScopeRef
     type: MemoryType | null
@@ -629,6 +701,9 @@ export class MemoryService {
     })
   }
 
+  /**
+   * Computes cosine similarity for each candidate and returns the surviving set in rank order.
+   */
   private async scoreSemanticCandidates(input: {
     candidates: MemoryRecord[]
     queryEmbedding: number[]
@@ -654,6 +729,9 @@ export class MemoryService {
       .map(item => item.memory)
   }
 
+  /**
+   * Warms the embedding cache asynchronously without blocking the calling write path.
+   */
   private scheduleEagerEmbedding(memory: MemoryRecord): void {
     globalThis.queueMicrotask(() => {
       void (async () => {
@@ -667,6 +745,9 @@ export class MemoryService {
     })
   }
 
+  /**
+   * Returns exact-search matches ordered by effective retrieval strength and stable rank.
+   */
   private getExactSearchItems(input: {
     scope: ScopeRef
     type: MemoryType | null
@@ -688,6 +769,9 @@ export class MemoryService {
       )
   }
 
+  /**
+   * Applies retrieval bookkeeping to the items returned from a search result page.
+   */
   private persistSearchRetrievalState(items: MemoryRecord[], now: string): MemoryRecord[] {
     if (items.length === 0) {
       return items
@@ -713,6 +797,9 @@ export class MemoryService {
     )
   }
 
+  /**
+   * Decides whether an observation should create, reinforce, or be rejected as a memory.
+   */
   applyObservation(input: ApplyObservationInput): ApplyMemoryResult {
     const scope = canonicalizeScope(validateScope(input.scope))
     const type = ensureMemoryType(ensureNonEmpty(input.type, 'INVALID_TYPE', 'Observation type must not be empty.'))
@@ -828,6 +915,9 @@ export class MemoryService {
     return result
   }
 
+  /**
+   * Runs exact or hybrid retrieval and persists access state for returned memories.
+   */
   async searchMemories(input: SearchMemoriesInput): Promise<SearchResult> {
     const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
@@ -916,6 +1006,9 @@ export class MemoryService {
     }
   }
 
+  /**
+   * Returns the highest-ranked memories for a scope after applying maintenance.
+   */
   listMemories(input: ListMemoriesInput): MemoryListResult {
     const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
@@ -936,6 +1029,9 @@ export class MemoryService {
     }
   }
 
+  /**
+   * Loads a single memory by id and expands contradiction metadata when present.
+   */
   getMemory(input: MemoryIdInput): MemoryGetResult {
     const id = input.id.trim()
     if (!id) {
@@ -950,6 +1046,9 @@ export class MemoryService {
     return this.createMemoryGetResult(memory)
   }
 
+  /**
+   * Returns the parsed event history for a memory.
+   */
   getMemoryHistory(input: MemoryIdInput): MemoryHistoryResult {
     const memory = this.getMemory(input)
     const items = this.deps.memoryEventRepository.listByMemoryId(memory.id).map(toParsedEvent)
@@ -960,6 +1059,9 @@ export class MemoryService {
     }
   }
 
+  /**
+   * Soft-deletes a memory and records a deletion event in the same transaction.
+   */
   deleteMemory(input: DeleteMemoryInput): DeleteMemoryResult {
     const memory = this.deps.memoryRepository.getById(input.id.trim())
     if (!memory) {
@@ -997,6 +1099,9 @@ export class MemoryService {
     })
   }
 
+  /**
+   * Suppresses the current memory and creates a scoped replacement record.
+   */
   contradictMemory(input: ContradictMemoryInput): ContradictMemoryResult {
     const id = input.id.trim()
     if (!id) {
@@ -1113,6 +1218,9 @@ export class MemoryService {
     })
   }
 
+  /**
+   * Returns the canonical runtime guidance resources exposed to MCP clients.
+   */
   getPolicy(): GetPolicyResult {
     const canonicalPolicy = {
       uri: runtimeMemoryPolicyResource.resourceUri,

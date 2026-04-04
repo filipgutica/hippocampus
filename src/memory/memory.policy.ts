@@ -90,21 +90,40 @@ export const RETRIEVAL_STRENGTH_FLOOR = 1.0
 export const RETRIEVAL_STRENGTH_CAP = 5
 export const DEFAULT_MAINTENANCE_BATCH_SIZE = 100
 
+/**
+ * Returns the initial lifecycle state for a new memory based on how it was sourced.
+ * Observed patterns start as candidates; explicit statements and tool-backed facts start active.
+ */
 export const getInitialMemoryStatus = (origin: MemoryOrigin): MemoryStatus =>
   origin === 'observed_pattern' ? 'candidate' : 'active'
 
+/**
+ * Returns true for states that still participate in normal runtime workflows.
+ */
 export const isLiveMemoryStatus = (status: MemoryStatus): boolean => status === 'candidate' || status === 'active'
 
+/**
+ * Returns true only for memories eligible for normal retrieval.
+ */
 export const isRetrievableMemoryStatus = (status: MemoryStatus): boolean => status === 'active'
 
+/**
+ * Returns the staleness threshold for a given scope type.
+ */
 export const getArchiveStaleDays = (scopeType: ScopeType): number =>
   scopeType === 'repo' ? ARCHIVE_STALE_AFTER_DAYS_REPO : ARCHIVE_STALE_AFTER_DAYS_USER
 
+/**
+ * Caps reinforcement so repeated writes do not grow a memory without bound.
+ */
 export const capReinforcementValue = (value: number): number => Math.min(value, REINFORCEMENT_CAP)
 
 const clampRetrievalStrength = (value: number): number =>
   Math.min(RETRIEVAL_STRENGTH_CAP, Math.max(RETRIEVAL_STRENGTH_FLOOR, value))
 
+/**
+ * Calculates how many full days have elapsed between two timestamps.
+ */
 const getDaysSince = ({ now, since }: { now: string; since: string }): number => {
   const elapsedMs = new Date(now).getTime() - new Date(since).getTime()
   if (elapsedMs <= 0) {
@@ -131,6 +150,9 @@ export const getEffectiveRetrievalStrength = ({
   return clampRetrievalStrength(strength * Math.pow(RETRIEVAL_DECAY_RATE, daysSinceLastRetrieved))
 }
 
+/**
+ * Applies a retrieval access event, including decay, periodic boosting, and timestamp updates.
+ */
 export const applyRetrievalAccess = (
   input: {
     retrievalCount: number
@@ -161,9 +183,15 @@ export const applyRetrievalAccess = (
   }
 }
 
+/**
+ * Prefers the stronger source origin when reinforcing an existing memory.
+ */
 export const pickStrongerOrigin = (current: MemoryOrigin, incoming: MemoryOrigin): MemoryOrigin =>
   originStrength[incoming] > originStrength[current] ? incoming : current
 
+/**
+ * Promotes candidate memories once they are reinforced enough, or immediately if the new origin is stronger.
+ */
 export const resolveReinforcedStatus = ({
   currentStatus,
   nextReinforcementCount,
@@ -184,6 +212,9 @@ export const resolveReinforcedStatus = ({
   return nextReinforcementCount >= CANDIDATE_PROMOTION_THRESHOLD ? 'active' : 'candidate'
 }
 
+/**
+ * Decides whether a new observation should create a memory, reinforce one, or be rejected.
+ */
 export const evaluateMemoryPolicy = ({
   policyVersion,
   subjectKey,

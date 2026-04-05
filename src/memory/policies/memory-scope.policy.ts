@@ -2,8 +2,8 @@ import { AppError } from '../../common/errors.js'
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 
 export const validateScope = (scope: ScopeRef): ScopeRef => {
-  if (!scope.type || !['user', 'repo', 'org'].includes(scope.type)) {
-    throw new AppError('INVALID_SCOPE', 'Scope type must be one of user, repo, or org.')
+  if (!scope.type || !['user', 'project'].includes(scope.type)) {
+    throw new AppError('INVALID_SCOPE', 'Scope type must be one of user or project.')
   }
 
   if (!scope.id.trim()) {

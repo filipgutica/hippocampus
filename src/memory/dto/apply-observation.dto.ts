@@ -4,7 +4,7 @@ import { MEMORY_ORIGINS, MEMORY_TYPES } from '../memory.types.js'
 
 const scopeRefSchema = z
   .object({
-    type: z.enum(['user', 'repo', 'org']),
+    type: z.enum(['user', 'project']),
     id: z.string().min(1),
   })
   .strict()

@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,6 +18,14 @@ const createTempDir = (): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hippo-mcp-guidance-test-'))
   tempDirs.push(dir)
   return dir
+}
+
+const initializeGitRepo = (repoRoot: string): void => {
+  fs.mkdirSync(repoRoot, { recursive: true })
+  execFileSync('git', ['init'], {
+    cwd: repoRoot,
+    stdio: 'ignore',
+  })
 }
 
 const getFirstTextContent = (value: unknown): string => {
@@ -69,6 +78,8 @@ afterEach(() => {
 describe('MCP guidance resource', () => {
   it('lists, reads, and aligns policy metadata', async () => {
     const home = createTempDir()
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
     const app = await buildApp({
       mode: 'runtime',
       allowLazyInit: true,
@@ -167,16 +178,27 @@ describe('MCP guidance resource', () => {
       const contradictTool = tools.tools.find(item => item.name === 'memory-contradict')
       expect(searchTool?.description).toContain('Default retrieval tool')
       expect(searchTool?.description).toContain('always provide `subject`')
-      expect(getScopeIdDescription(searchTool)).toContain('canonical absolute path to the repo root')
+      expect(getScopeIdDescription(searchTool)).toContain('durable project scope id returned by `project-ensure`')
       expect(policyTool?.description).toContain('Start here once per session')
       expect(policyTool?.description).toContain('resource pointers')
       expect(contradictTool?.description).toContain('First find the id with `memory-search` or `memory-list`')
       expect(contradictTool?.description).toContain('replacement may carry a different type')
 
+      const ensuredProject = await client.callTool({
+        name: 'project-ensure',
+        arguments: {
+          scope: { type: 'project', id: repoRoot },
+        },
+      })
+      const ensuredProjectResult = JSON.parse(getFirstTextContent(ensuredProject.content)) as {
+        project: { scope: { id: string } }
+      }
+      const projectScopeId = ensuredProjectResult.project.scope.id
+
       const searchResult = await client.callTool({
         name: 'memory-search',
         arguments: {
-          scope: { type: 'repo', id: '/tmp/example-repo' },
+          scope: { type: 'project', id: projectScopeId },
           subject: 'prefer pnpm',
           matchMode: 'exact',
           limit: 1,

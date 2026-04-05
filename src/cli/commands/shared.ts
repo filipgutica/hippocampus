@@ -1,8 +1,8 @@
 import fs from 'node:fs'
-import { resolveRepoScopeId } from '../../repos/repo-scope.js'
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../../memory/dto/apply-observation.dto.js'
 import type { InitResult } from '../../app/init.service.js'
+import { resolveProjectRepoRoot } from '../../projects/project-identity.js'
 import type {
   ApplyMemoryResult,
   ArchiveStaleMemoriesResult,
@@ -13,8 +13,8 @@ import type {
   SearchResult,
 } from '../../memory/dto/memory-result.dto.js'
 import type { GetPolicyResult } from '../../memory/dto/get-policy.dto.js'
-import type { MemoryEntity } from '../../memory/entities/memory.entity.js'
 import type { MemoryGetResult } from '../../memory/dto/memory-result.dto.js'
+import type { Memory } from '../../memory/types/memory.js'
 
 export type CliResult = {
   code: number
@@ -39,16 +39,20 @@ const hasObservationArgs = (argv: string[]): boolean =>
   )
 
 export const resolveScope = (argv: string[]): ScopeRef => {
-  const scopeType = parseArgValue(argv, '--scope-type') ?? 'repo'
-  const explicitScopeId = parseArgValue(argv, '--scope-id')
-  const scopeId = scopeType === 'repo' ? explicitScopeId ?? resolveRepoScopeId(process.cwd()) : explicitScopeId
+  const scopeType = (parseArgValue(argv, '--scope-type') ?? 'project') as ScopeRef['type']
+  const scopeId =
+    scopeType === 'project' ? parseArgValue(argv, '--scope-id') ?? resolveProjectRepoRoot(process.cwd()) ?? undefined : parseArgValue(argv, '--scope-id')
 
   if (!scopeId) {
-    throw new Error(`Missing --scope-id for scope type ${scopeType}.`)
+    throw new Error(
+      scopeType === 'project'
+        ? 'Missing --scope-id for scope type project. Run `hippo project ensure --json` first to resolve the current project scope id.'
+        : `Missing --scope-id for scope type ${scopeType}.`,
+    )
   }
 
   return {
-    type: scopeType as ScopeRef['type'],
+    type: scopeType,
     id: scopeId,
   }
 }
@@ -93,7 +97,7 @@ export const writeOutput = (io: CliIO, payload: unknown, json = false): void => 
 export const resolveObservationSource = (input: Partial<ApplyObservationInput>): ApplyObservationInput['source'] =>
   input.source ?? null
 
-const formatMemory = (memory: MemoryEntity): string =>
+const formatMemory = (memory: Memory): string =>
   [
     `id: ${memory.id}`,
     `scope: ${memory.scope.type}:${memory.scope.id}`,
@@ -177,8 +181,7 @@ export const formatArchiveStaleMemoriesResult = (result: ArchiveStaleMemoriesRes
   const cutoffByScope = [
     'cutoffByScope:',
     `  user: ${result.cutoffByScope.user}`,
-    `  repo: ${result.cutoffByScope.repo}`,
-    `  org: ${result.cutoffByScope.org}`,
+    `  project: ${result.cutoffByScope.project}`,
   ]
 
   if (result.items.length === 0) {

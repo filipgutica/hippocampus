@@ -92,6 +92,7 @@ describe('setup command', () => {
 
       expect(fs.existsSync(scriptPath)).toBe(true)
       const scriptContent = fs.readFileSync(scriptPath, 'utf8')
+      expect(scriptContent).toContain('project ensure')
       expect(scriptContent).toContain('memory-list')
       expect(scriptContent).toContain('readCurrentUserId')
       expect(scriptContent).not.toContain('process.env.USER ?? os.userInfo().username')

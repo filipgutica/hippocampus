@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 import { AppError } from '../common/errors.js'
 import { APP_CONFIG_SCHEMA_VERSION, type AppConfig } from './config.js'
 
-const OWNERSHIP_TABLES = ['users', 'projects'] as const
+const OWNERSHIP_TABLES = ['users', 'projects', 'project_paths'] as const
 const REQUIRED_MEMORY_COLUMNS = ['user_id', 'project_id'] as const
 
 const hasTable = (db: InstanceType<typeof Database>, tableName: string): boolean => {

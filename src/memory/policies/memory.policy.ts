@@ -42,7 +42,7 @@ export const memoryOriginDefinitions: PolicyDefinition<MemoryOrigin>[] = [
   },
   {
     value: 'tool_observation',
-    description: 'A durable fact derived from objective evidence such as repo files, config, docs, or tool output.',
+    description: 'A durable fact derived from objective evidence such as project files, config, docs, or tool output.',
   },
 ]
 
@@ -110,7 +110,7 @@ export const isRetrievableMemoryStatus = (status: MemoryStatus): boolean => stat
  * Returns the staleness threshold for a given scope type.
  */
 export const getArchiveStaleDays = (scopeType: ScopeType): number =>
-  scopeType === 'repo' ? ARCHIVE_STALE_AFTER_DAYS_REPO : ARCHIVE_STALE_AFTER_DAYS_USER
+  scopeType === 'project' ? ARCHIVE_STALE_AFTER_DAYS_REPO : ARCHIVE_STALE_AFTER_DAYS_USER
 
 /**
  * Caps reinforcement so repeated writes do not grow a memory without bound.

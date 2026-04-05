@@ -1,6 +1,6 @@
 # Hippocampus Architecture
 
-Hippocampus is a local-first memory runtime for coding agents. It exposes a TypeScript CLI (`hippo`) and a Model Context Protocol (MCP) stdio server backed by a local SQLite database. Agents use MCP tools to read and write structured memories that persist across sessions and are scoped to a user, repository, or organisation.
+Hippocampus is a local-first memory runtime for coding agents. It exposes a TypeScript CLI (`hippo`) and a Model Context Protocol (MCP) stdio server backed by a local SQLite database. Agents use MCP tools to read and write structured memories that persist across sessions and are scoped to a user or project.
 
 ---
 
@@ -13,10 +13,10 @@ hippocampus/
 │   ├── app/               # App container factory and initialisation
 │   ├── cli/               # CLI command handlers and setup tooling
 │   ├── mcp/               # MCP server, tools, and resources
-│   ├── memory/            # Core memory domain: service, repositories, entities, DTOs, policies, search
+│   ├── memory/            # Core memory domain: service, repositories, types, DTOs, policies, search
 │   ├── common/            # Database init, migrations, shared utilities
 │   ├── guidance/          # Guidance catalog (policy + scope skill)
-│   └── repos/             # Repo scope resolution helpers
+│   └── projects/          # Project scope resolution helpers
 ├── dist/                  # Compiled output (gitignored)
 ├── test/                  # Vitest integration tests
 ├── scripts/               # Build helpers and smoke tests
@@ -101,7 +101,7 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 1. **Input** — CLI args are parsed into `ApplyObservationInput` (scope, type, subject, statement, origin, details, source). MCP mutation tools require `source = { channel: 'mcp', agent: 'codex' | 'claude', sessionId }`; CLI writes continue to use `{ channel: 'cli' }`.
 
 2. **`MemoryService.applyObservation()`** (`src/memory/memory.service.ts`):
-   - Canonicalises the scope (resolves repo paths to absolute)
+   - Canonicalises the scope (resolves project paths to absolute)
    - Normalises `subject` → `subjectKey` (lowercase, trimmed)
    - Optionally runs the auto-archive sweep if the cooldown has elapsed (24 h)
    - Calls `evaluateMemoryPolicy()` to decide: **reject** / **create** / **reinforce**
@@ -117,13 +117,15 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 
 ## Memory model
 
-`src/memory/entities/` contains DB-mapped shapes only. `MemoryEntity` mirrors the `memories` table, and `MemoryEventEntity` mirrors the `memory_events` table with raw `observationJson` and `sourceJson` columns.
+`src/common/db/schema/` is the Drizzle schema source of truth. Each table lives in its own file and exports both the table definition and inferred `*Row` / `New*Row` types for persistence-layer use.
+
+`src/memory/types/` contains service-facing mapped shapes. `Memory` is the normalized runtime shape returned by `MemoryRepository`, while `MemoryEvent` preserves the runtime event shape with `scope: ScopeRef` and raw stored JSON fields.
 
 `src/memory/dto/` contains transport shapes. `MemoryDto` is the outward memory contract returned by search/list/get and carries `latestEventSummary`. `MemoryEventDto` is the parsed event-history contract returned by `memory-get-history`.
 
 Phase-1 ownership note:
 
-- external CLI/MCP scope remains `user`, `repo`, or `org`
+- external CLI/MCP scope remains `user` or `project`
 - local Hippocampus owner identity is tracked separately as `config.currentUserId`
 - `scope.id` for external user scope is not the same thing as the local configured owner id
 - pre-phase-1 local databases are treated as incompatible dev state and must be reset rather than migrated in place
@@ -134,9 +136,9 @@ Key columns on a memory record (`memories` table):
 |---|---|---|
 | `id` | TEXT (UUID) | Primary key |
 | `user_id` | TEXT | FK to the local Hippocampus owner row |
-| `project_id` | TEXT | Nullable FK to `projects`; populated for repo scope |
-| `scope_type` | TEXT | Compatibility scope snapshot: `user`, `repo`, or `org` |
-| `scope_id` | TEXT | Compatibility scope snapshot: canonical path (repo) or caller-provided user/org id |
+| `project_id` | TEXT | Nullable FK to `projects`; populated for project scope |
+| `scope_type` | TEXT | Compatibility scope snapshot: `user` or `project` |
+| `scope_id` | TEXT | Compatibility scope snapshot: canonical path (project) or caller-provided user id |
 | `memory_type` | TEXT | See memory types below |
 | `subject` | TEXT | Human-readable subject label |
 | `subject_key` | TEXT | Normalised subject used for uniqueness |
@@ -228,7 +230,7 @@ Defined in `src/memory/policies/memory.policy.ts`:
 | `REINFORCEMENT_CAP` | 5 | Max reinforcement count |
 | `CANDIDATE_PROMOTION_THRESHOLD` | 3 | Reinforcements needed to promote candidate → active |
 | `ARCHIVE_STALE_AFTER_DAYS_USER` | 90 | Days before a user-scope memory is archived |
-| `ARCHIVE_STALE_AFTER_DAYS_REPO` | 365 | Days before a repo-scope memory is archived |
+| `ARCHIVE_STALE_AFTER_DAYS_PROJECT` | 365 | Days before a project-scope memory is archived |
 | `AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS` | 24 | Minimum gap between automatic archive sweeps |
 | `AUTO_ARCHIVE_SWEEP_LIMIT` | 50 | Max memories archived per sweep |
 | `RETRIEVAL_DECAY_RATE` | 0.95 | Per-day strength decay for boosted memories |
@@ -259,7 +261,7 @@ Defined in `src/memory/policies/memory.policy.ts`:
 | URI | Description |
 |---|---|
 | `hippocampus://policy/runtime-memory` | Canonical runtime usage guidance (when and what to store) |
-| `hippocampus://skills/memory-scope` | Supporting guidance for choosing repo, user, or org scope |
+| `hippocampus://skills/memory-scope` | Supporting guidance for choosing user or project scope |
 
 ---
 
@@ -294,9 +296,10 @@ The default location is `~/.hippocampus`. Override with `HIPPOCAMPUS_HOME`.
 
 1. Resolves the `hippo` or `hippocampus` binary from `PATH` via a login shell.
 2. Calls `hippo get-policy` to fetch the current runtime policy.
-3. Detects the git repo root (`git rev-parse --show-toplevel`) and calls `hippo memories list --scope-type repo --scope-id <root> --limit 5`.
-4. Reads Hippocampus `config.json` for `currentUserId` and calls `hippo memories list --scope-type user --scope-id <currentUserId> --limit 5` for local-owner bootstrap context.
-5. Concatenates the results into `hookSpecificOutput.additionalContext` and writes it to stdout as JSON.
+3. Detects the git repo root (`git rev-parse --show-toplevel`) and calls `hippo project ensure --scope-id <root> --json`.
+4. Uses the ensured project scope id to call `hippo memories list --scope-type project --scope-id <project-id> --limit 5`.
+5. Reads Hippocampus `config.json` for `currentUserId` and calls `hippo memories list --scope-type user --scope-id <currentUserId> --limit 5` for local-owner bootstrap context.
+6. Concatenates the results into `hookSpecificOutput.additionalContext` and writes it to stdout as JSON.
 
 The agent runtime (Claude Code, Codex) injects `additionalContext` into the session context before the agent processes its first message.
 

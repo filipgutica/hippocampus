@@ -1,7 +1,7 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from '../memory.types.js'
 
-export type MemoryEntity = {
+export type Memory = {
   id: string
   scope: ScopeRef
   type: MemoryType

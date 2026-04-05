@@ -37,9 +37,19 @@ export const migrations: Migration[] = [
 
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
+        identity_source TEXT NOT NULL,
+        identity_value TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(identity_source, identity_value)
+      );
+
+      CREATE TABLE IF NOT EXISTS project_paths (
+        project_id TEXT NOT NULL REFERENCES projects(id),
         canonical_path TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, canonical_path)
       );
 
       CREATE TABLE IF NOT EXISTS memories (
@@ -67,8 +77,8 @@ export const migrations: Migration[] = [
         superseded_by TEXT REFERENCES memories(id),
         deleted_at TEXT,
         CHECK (
-          (scope_type = 'repo' AND project_id IS NOT NULL)
-          OR (scope_type IN ('user', 'org') AND project_id IS NULL)
+          (scope_type = 'project' AND project_id IS NOT NULL AND scope_id = project_id)
+          OR (scope_type = 'user' AND project_id IS NULL)
         )
       );
 
@@ -104,7 +114,7 @@ export const migrations: Migration[] = [
         model_fingerprint TEXT NOT NULL DEFAULT ''
       );
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_repo_scope_memory_type_subject
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_project_scope_memory_type_subject
         ON memories(user_id, project_id, memory_type, subject_key)
         WHERE status IN ('candidate', 'active') AND project_id IS NOT NULL;
 
@@ -112,7 +122,7 @@ export const migrations: Migration[] = [
         ON memories(user_id, scope_type, scope_id, memory_type, subject_key)
         WHERE status IN ('candidate', 'active') AND project_id IS NULL;
 
-      CREATE INDEX IF NOT EXISTS idx_memories_status_repo_memory_type
+      CREATE INDEX IF NOT EXISTS idx_memories_status_project_memory_type
         ON memories(status, user_id, project_id, memory_type)
         WHERE project_id IS NOT NULL;
 

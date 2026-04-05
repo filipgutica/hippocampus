@@ -7,6 +7,7 @@ import { registerMemoryGetHistoryTool } from './tools/memory-get-history.tool.js
 import { registerMemoryGetTool } from './tools/memory-get.tool.js'
 import { registerMemoryGetPolicyTool } from './tools/memory-get-policy.tool.js'
 import { registerMemoryListTool } from './tools/memory-list.tool.js'
+import { registerProjectEnsureTool } from './tools/project-ensure.tool.js'
 import { registerMemorySearchTool } from './tools/memory-search.tool.js'
 import { registerMemoryRuntimePolicyResource } from './resources/memory-runtime-policy.resource.js'
 import { registerMemoryScopeGuidanceResource } from './resources/memory-scope-guidance.resource.js'
@@ -24,6 +25,7 @@ export const createMcpServer = (memoryService: MemoryService) => {
   registerMemoryListTool(server, memoryService)
   registerMemoryGetTool(server, memoryService)
   registerMemoryGetHistoryTool(server, memoryService)
+  registerProjectEnsureTool(server, memoryService)
   registerMemoryRuntimePolicyResource(server)
   registerMemoryScopeGuidanceResource(server)
 

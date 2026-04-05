@@ -1,4 +1,4 @@
-export type ScopeType = 'user' | 'repo' | 'org'
+export type ScopeType = 'user' | 'project'
 
 export type ScopeRef = {
   type: ScopeType

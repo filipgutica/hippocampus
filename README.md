@@ -30,8 +30,8 @@ Hippocampus is still pre-stable and local-only during development. The local SQL
 
 Current ownership model note:
 
-- external CLI/MCP scope is still `user`, `repo`, or `org`
-- Hippocampus now also tracks a separate local owner id in `config.json` as `currentUserId`
+- external CLI/MCP scope is `user` or `project`
+- Hippocampus also tracks a separate local owner id in `config.json` as `currentUserId`
 - older pre-redesign local databases are not migrated in place; reset local state and run `hippo init` again
 
 ## Install and Run
@@ -94,7 +94,7 @@ hippo uninstall --mode full-wipe --yes
 - `mcp/hooks only` removes installer-managed Claude/Codex wiring and any shell PATH blocks that Hippocampus previously tracked via `setup shell`
 - sibling hooks inside a shared `SessionStart` entry are preserved on setup and uninstall
 - Hippocampus will not overwrite an unmanaged `hippo` MCP entry; migrate or remove that config first
-- both install the same bootstrap text so sessions start with `memory-get-policy`, repo-scope `memory-list`, user-scope `memory-list`, and subject-based `memory-search` guidance
+- both install the same bootstrap text so sessions start with `memory-get-policy`, `project ensure`, project-scope `memory-list`, user-scope `memory-list`, and subject-based `memory-search` guidance
 - use `--dry-run` to preview the files before writing them
 - use `--yes` to skip interactive confirmation prompts for destructive CLI flows
 
@@ -212,15 +212,15 @@ Apply a memory:
 
 ```bash
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js apply \
-  --scope-type repo \
-  --scope-id /tmp/example-repo \
+  --scope-type project \
+  --scope-id /tmp/example-project \
   --type preference \
   --origin tool_observation \
   --subject "Prefer pnpm" \
-  --statement "Use pnpm for this repo."
+  --statement "Use pnpm for this project."
 ```
 
-For `repo` scope, prefer the canonical absolute path to the repo root with symlinks resolved. The CLI still infers the repo root when `--scope-id` is omitted, but MCP callers should pass the root path explicitly.
+For `project` scope, run `hippo project ensure` first so the CLI or MCP caller can use the ensured project scope id. The CLI can still infer the current project from the working directory when `--scope-id` is omitted.
 
 For `user` scope, continue using the caller-chosen durable user namespace for the memory itself. That external `scope-id` is distinct from Hippocampus's internal `currentUserId`, which only identifies the local owner row used by the runtime.
 
@@ -228,8 +228,8 @@ Search active memories:
 
 ```bash
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js search \
-  --scope-type repo \
-  --scope-id /tmp/example-repo \
+  --scope-type project \
+  --scope-id /tmp/example-project \
   --subject "prefer pnpm" \
   --json
 ```
@@ -260,7 +260,7 @@ Current retrieval behavior:
 - retrieval `strength` decays over time from `lastRetrievedAt` and is used only as a search tie-break, not as evidence
 - a `candidate` memory promotes to `active` after enough reinforcement
 - stale `candidate` and `active` memories are archived only when both `lastReinforcedAt` and `lastRetrievedAt` are stale, or when they were never retrieved
-- default archival thresholds are scope-aware: `user` and `org` archive after 90 days, `repo` archives after 365 days
+- default archival thresholds are scope-aware: `user` archives after 90 days, `project` archives after 365 days
 - automatic archival runs on a 24-hour cooldown before normal retrieval flows
 - `memories maintain` flushes decayed retrieval strength to the stored column for boosted memories; run explicitly or on a schedule; supports `--dry-run` and `--batch-size`
 - archived memories stay inspectable through `memory-get` and `memory-get-history`
@@ -276,8 +276,8 @@ Inspect and manage stored memories:
 
 ```bash
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories list \
-  --scope-type repo \
-  --scope-id /tmp/example-repo \
+  --scope-type project \
+  --scope-id /tmp/example-project \
   --json
 
 HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js memories archive-stale --json

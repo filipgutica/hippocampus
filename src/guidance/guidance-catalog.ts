@@ -31,8 +31,8 @@ export const memoryScopeGuidanceResource: GuidanceResourceDefinition = {
   resourceUri: 'hippocampus://skills/memory-scope',
   title: 'Hippocampus Memory Scope Guidance',
   description: normalizeWhitespace(`
-    Supporting guidance for choosing repo, user, or
-    org scope and constructing canonical repo scope ids.
+    Supporting guidance for choosing user or project
+    scope and constructing canonical project scope ids.
   `),
   mimeType: 'text/markdown',
 }

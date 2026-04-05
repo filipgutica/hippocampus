@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,6 +16,14 @@ const createTempDir = (): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hippo-mcp-memory-test-'))
   tempDirs.push(dir)
   return dir
+}
+
+const initializeGitRepo = (repoRoot: string): void => {
+  fs.mkdirSync(repoRoot, { recursive: true })
+  execFileSync('git', ['init'], {
+    cwd: repoRoot,
+    stdio: 'ignore',
+  })
 }
 
 const getFirstTextContent = (value: unknown): string => {
@@ -158,11 +167,13 @@ describe('MCP memory management tools', () => {
       const applyTool = tools.tools.find(tool => tool.name === 'memory-apply-observation')
       const contradictTool = tools.tools.find(tool => tool.name === 'memory-contradict')
       const searchTool = tools.tools.find(tool => tool.name === 'memory-search')
+      const projectEnsureTool = tools.tools.find(tool => tool.name === 'project-ensure')
       expect(listTool).toBeDefined()
       expect(getTool).toBeDefined()
       expect(historyTool).toBeDefined()
       expect(applyTool).toBeDefined()
       expect(contradictTool).toBeDefined()
+      expect(projectEnsureTool).toBeDefined()
       expect(searchTool?.description).toContain('always provide `subject`')
       expect(listTool?.description).toContain('broad recall by memory class')
       expect(listTool?.description).toContain('scope-plus-type browsing')
@@ -171,10 +182,11 @@ describe('MCP memory management tools', () => {
       expect(applyTool?.description).toContain('call `memory-get-policy` first')
       expect(applyTool?.description).toContain('will not appear in normal search/list results')
       expect(contradictTool?.description).toContain('First find the id with `memory-search` or `memory-list`')
-      expect(getScopeIdDescription(searchTool)).toContain('canonical absolute path to the repo root')
-      expect(getScopeIdDescription(listTool)).toContain('canonical absolute path to the repo root')
-      expect(getScopeIdDescription(applyTool)).toContain('canonical absolute path to the repo root')
-      expect(getReplacementScopeIdDescription(contradictTool)).toContain('canonical absolute path to the repo root')
+      expect(getScopeIdDescription(searchTool)).toContain('durable project scope id returned by `project-ensure`')
+      expect(getScopeIdDescription(listTool)).toContain('durable project scope id returned by `project-ensure`')
+      expect(getScopeIdDescription(applyTool)).toContain('durable project scope id returned by `project-ensure`')
+      expect(getReplacementScopeIdDescription(contradictTool)).toContain('durable project scope id returned by `project-ensure`')
+      expect(getScopeIdDescription(projectEnsureTool)).toContain('Use the current repository root path or another explicit local project path')
       expect(getSourceProperties(applyTool)).toMatchObject({
         channel: expect.anything(),
         agent: expect.anything(),
@@ -187,13 +199,34 @@ describe('MCP memory management tools', () => {
       })
       expect(tools.tools.some(tool => tool.name === 'memory-delete')).toBe(false)
 
+      const repoRoot = path.join(home, 'repo')
+      initializeGitRepo(repoRoot)
+
+      const ensuredProject = await client.callTool({
+        name: 'project-ensure',
+        arguments: {
+          scope: { type: 'project', id: repoRoot },
+        },
+      })
+      const ensuredProjectResult = JSON.parse(getFirstTextContent(ensuredProject.content)) as {
+        project: {
+          scope: { type: string; id: string }
+          ensured: boolean
+        }
+      }
+      expect(ensuredProjectResult.project.scope.type).toBe('project')
+      expect(ensuredProjectResult.project.scope.id).toBeTruthy()
+      expect(ensuredProjectResult.project.path).toBe(fs.realpathSync(repoRoot))
+      expect(ensuredProjectResult.project.ensured).toBe(true)
+      const projectScopeId = ensuredProjectResult.project.scope.id
+
       const applied = await client.callTool({
         name: 'memory-apply-observation',
         arguments: {
-          scope: { type: 'repo', id: '/tmp/example-repo' },
+          scope: { type: 'project', id: projectScopeId },
           type: 'preference',
           subject: 'Prefer pnpm',
-          statement: 'Use pnpm for this repo.',
+          statement: 'Use pnpm for this project.',
           origin: 'explicit_user_statement',
           source: { channel: 'mcp', agent: 'codex', sessionId: 'session-1' },
         },
@@ -207,10 +240,10 @@ describe('MCP memory management tools', () => {
           id: memoryId,
           source: { channel: 'mcp', agent: 'codex', sessionId: 'session-1' },
           replacement: {
-            scope: { type: 'repo', id: '/tmp/example-repo' },
+            scope: { type: 'project', id: projectScopeId },
             type: 'preference',
             subject: 'Prefer npm',
-            statement: 'Use npm for this repo.',
+            statement: 'Use npm for this project.',
             origin: 'explicit_user_statement',
           },
         },
@@ -226,7 +259,7 @@ describe('MCP memory management tools', () => {
       const listed = await client.callTool({
         name: 'memory-list',
         arguments: {
-          scope: { type: 'repo', id: '/tmp/example-repo' },
+          scope: { type: 'project', id: projectScopeId },
         },
       })
       const listResult = JSON.parse(getFirstTextContent(listed.content)) as { total: number }
@@ -276,7 +309,7 @@ describe('MCP memory management tools', () => {
       const searched = await client.callTool({
         name: 'memory-search',
         arguments: {
-          scope: { type: 'repo', id: '/tmp/example-repo' },
+          scope: { type: 'project', id: projectScopeId },
           subject: 'prefer pnpm',
           matchMode: 'exact',
           limit: 10,
@@ -287,7 +320,7 @@ describe('MCP memory management tools', () => {
       const replacementSearch = await client.callTool({
         name: 'memory-search',
         arguments: {
-          scope: { type: 'repo', id: '/tmp/example-repo' },
+          scope: { type: 'project', id: projectScopeId },
           subject: 'prefer npm',
           matchMode: 'exact',
           limit: 10,
@@ -305,6 +338,8 @@ describe('MCP memory management tools', () => {
 
   it('rejects invalid provenance on the MCP mutation tools', async () => {
     const home = createTempDir()
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
     const app = await buildApp({
       mode: 'runtime',
       allowLazyInit: true,
@@ -323,14 +358,25 @@ describe('MCP memory management tools', () => {
       await mcp.server.connect(serverTransport)
       await client.connect(clientTransport)
 
+      const ensuredProject = await client.callTool({
+        name: 'project-ensure',
+        arguments: {
+          scope: { type: 'project', id: repoRoot },
+        },
+      })
+      const ensuredProjectResult = JSON.parse(getFirstTextContent(ensuredProject.content)) as {
+        project: { scope: { id: string } }
+      }
+      const projectScopeId = ensuredProjectResult.project.scope.id
+
       await expectToolCallToFail(
         client.callTool({
           name: 'memory-apply-observation',
           arguments: {
-            scope: { type: 'repo', id: '/tmp/example-repo' },
+            scope: { type: 'project', id: projectScopeId },
             type: 'preference',
             subject: 'Prefer pnpm',
-            statement: 'Use pnpm for this repo.',
+            statement: 'Use pnpm for this project.',
             origin: 'explicit_user_statement',
           },
         }),
@@ -340,10 +386,10 @@ describe('MCP memory management tools', () => {
         client.callTool({
           name: 'memory-apply-observation',
           arguments: {
-            scope: { type: 'repo', id: '/tmp/example-repo' },
+            scope: { type: 'project', id: projectScopeId },
             type: 'preference',
             subject: 'Prefer pnpm',
-            statement: 'Use pnpm for this repo.',
+            statement: 'Use pnpm for this project.',
             origin: 'explicit_user_statement',
             source: { channel: 'mcp', sessionId: 'session-1' },
           },
@@ -354,10 +400,10 @@ describe('MCP memory management tools', () => {
         client.callTool({
           name: 'memory-apply-observation',
           arguments: {
-            scope: { type: 'repo', id: '/tmp/example-repo' },
+            scope: { type: 'project', id: projectScopeId },
             type: 'preference',
             subject: 'Prefer pnpm',
-            statement: 'Use pnpm for this repo.',
+            statement: 'Use pnpm for this project.',
             origin: 'explicit_user_statement',
             source: { channel: 'mcp', agent: 'codex' },
           },
@@ -368,10 +414,10 @@ describe('MCP memory management tools', () => {
         client.callTool({
           name: 'memory-apply-observation',
           arguments: {
-            scope: { type: 'repo', id: '/tmp/example-repo' },
+            scope: { type: 'project', id: projectScopeId },
             type: 'preference',
             subject: 'Prefer pnpm',
-            statement: 'Use pnpm for this repo.',
+            statement: 'Use pnpm for this project.',
             origin: 'explicit_user_statement',
             source: { channel: 'mcp', runId: 'legacy-session' },
           },
@@ -381,10 +427,10 @@ describe('MCP memory management tools', () => {
       const created = await client.callTool({
         name: 'memory-apply-observation',
         arguments: {
-          scope: { type: 'repo', id: '/tmp/example-repo' },
+          scope: { type: 'project', id: projectScopeId },
           type: 'preference',
           subject: 'Prefer pnpm',
-          statement: 'Use pnpm for this repo.',
+          statement: 'Use pnpm for this project.',
           origin: 'explicit_user_statement',
           source: { channel: 'mcp', agent: 'codex', sessionId: 'session-1' },
         },
@@ -397,10 +443,10 @@ describe('MCP memory management tools', () => {
           arguments: {
             id: createdResult.memory.id,
             replacement: {
-              scope: { type: 'repo', id: '/tmp/example-repo' },
+              scope: { type: 'project', id: projectScopeId },
               type: 'preference',
               subject: 'Prefer npm',
-              statement: 'Use npm for this repo.',
+              statement: 'Use npm for this project.',
               origin: 'explicit_user_statement',
             },
           },
@@ -414,10 +460,10 @@ describe('MCP memory management tools', () => {
             id: createdResult.memory.id,
             source: { channel: 'mcp', sessionId: 'session-1' },
             replacement: {
-              scope: { type: 'repo', id: '/tmp/example-repo' },
+              scope: { type: 'project', id: projectScopeId },
               type: 'preference',
               subject: 'Prefer npm',
-              statement: 'Use npm for this repo.',
+              statement: 'Use npm for this project.',
               origin: 'explicit_user_statement',
             },
           },
@@ -431,10 +477,10 @@ describe('MCP memory management tools', () => {
             id: createdResult.memory.id,
             source: { channel: 'mcp', agent: 'codex' },
             replacement: {
-              scope: { type: 'repo', id: '/tmp/example-repo' },
+              scope: { type: 'project', id: projectScopeId },
               type: 'preference',
               subject: 'Prefer npm',
-              statement: 'Use npm for this repo.',
+              statement: 'Use npm for this project.',
               origin: 'explicit_user_statement',
             },
           },
@@ -448,10 +494,10 @@ describe('MCP memory management tools', () => {
             id: createdResult.memory.id,
             source: { channel: 'mcp', runId: 'legacy-session' },
             replacement: {
-              scope: { type: 'repo', id: '/tmp/example-repo' },
+              scope: { type: 'project', id: projectScopeId },
               type: 'preference',
               subject: 'Prefer npm',
-              statement: 'Use npm for this repo.',
+              statement: 'Use npm for this project.',
               origin: 'explicit_user_statement',
             },
           },
@@ -466,6 +512,8 @@ describe('MCP memory management tools', () => {
 
   it('rejects invalid provenance on the delete tool when it is registered directly', async () => {
     const home = createTempDir()
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
     const app = await buildApp({
       mode: 'runtime',
       allowLazyInit: true,
@@ -489,11 +537,13 @@ describe('MCP memory management tools', () => {
       await server.connect(serverTransport)
       await client.connect(clientTransport)
 
+      const ensuredProject = await app.memoryService.ensureProject({ path: repoRoot })
+
       const created = await app.memoryService.applyObservation({
-        scope: { type: 'repo', id: '/tmp/example-repo' },
+        scope: ensuredProject.scope,
         type: 'preference',
         subject: 'Prefer pnpm',
-        statement: 'Use pnpm for this repo.',
+        statement: 'Use pnpm for this project.',
         origin: 'explicit_user_statement',
         source: { channel: 'cli' },
       })

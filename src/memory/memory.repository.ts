@@ -1,54 +1,62 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import type { MemoryRow } from '../common/db/schema/index.js'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
-import type { MemoryEntity } from './entities/memory.entity.js'
 import { type ResolvedMemoryOwnership, MemoryOwnershipRepository } from './memory-ownership.repository.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from './memory.types.js'
+import type { Memory } from './types/memory.js'
 
-type MemoryRow = {
-  id: string
-  scope_type: string
-  scope_id: string
-  memory_type: MemoryType
-  subject: string
-  subject_key: string
-  statement: string
-  details: string | null
-  origin: MemoryOrigin
-  reinforcement_count: number
-  policy_version: string
-  created_at: string
-  updated_at: string
-  last_observed_at?: string
-  last_reinforced_at: string
-  retrieval_count: number
-  last_retrieved_at: string | null
-  strength: number
-  status: MemoryStatus
-  superseded_by: string | null
-  deleted_at: string | null
+const getMemorySelectColumns = (alias?: string): string => {
+  const prefix = alias ? `${alias}.` : ''
+  return `
+    ${prefix}id,
+    ${prefix}scope_type AS scopeType,
+    ${prefix}scope_id AS scopeId,
+    ${prefix}memory_type AS memoryType,
+    ${prefix}subject,
+    ${prefix}subject_key AS subjectKey,
+    ${prefix}statement,
+    ${prefix}details,
+    ${prefix}origin,
+    ${prefix}reinforcement_count AS reinforcementCount,
+    ${prefix}policy_version AS policyVersion,
+    ${prefix}created_at AS createdAt,
+    ${prefix}updated_at AS updatedAt,
+    ${prefix}last_observed_at AS lastObservedAt,
+    ${prefix}last_reinforced_at AS lastReinforcedAt,
+    ${prefix}retrieval_count AS retrievalCount,
+    ${prefix}last_retrieved_at AS lastRetrievedAt,
+    ${prefix}strength,
+    ${prefix}status,
+    ${prefix}superseded_by AS supersededBy,
+    ${prefix}deleted_at AS deletedAt
+  `
 }
 
-const toRecord = (row: MemoryRow): MemoryEntity => ({
+type SelectedMemoryRow = MemoryRow & {
+  lastObservedAt: string
+}
+
+const toMemory = (row: SelectedMemoryRow): Memory => ({
   id: row.id,
-  scope: { type: row.scope_type as ScopeRef['type'], id: row.scope_id },
-  type: row.memory_type,
+  scope: { type: row.scopeType as ScopeRef['type'], id: row.scopeId },
+  type: row.memoryType as MemoryType,
   subject: row.subject,
-  subjectKey: row.subject_key,
+  subjectKey: row.subjectKey,
   statement: row.statement,
   details: row.details,
-  origin: row.origin,
-  reinforcementCount: row.reinforcement_count,
-  policyVersion: row.policy_version,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-  lastReinforcedAt: row.last_reinforced_at || row.last_observed_at || row.updated_at,
-  retrievalCount: row.retrieval_count,
-  lastRetrievedAt: row.last_retrieved_at,
+  origin: row.origin as MemoryOrigin,
+  reinforcementCount: row.reinforcementCount,
+  policyVersion: row.policyVersion,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+  lastReinforcedAt: row.lastReinforcedAt || row.lastObservedAt || row.updatedAt,
+  retrievalCount: row.retrievalCount,
+  lastRetrievedAt: row.lastRetrievedAt,
   strength: row.strength,
-  status: row.status,
-  supersededBy: row.superseded_by,
-  deletedAt: row.deleted_at,
+  status: row.status as MemoryStatus,
+  supersededBy: row.supersededBy,
+  deletedAt: row.deletedAt,
 })
 
 export class MemoryRepository {
@@ -72,7 +80,7 @@ export class MemoryRepository {
   } {
     const prefix = input.scopeAlias ? `${input.scopeAlias}.` : ''
 
-    if (input.ownership.scope.type === 'repo') {
+    if (input.ownership.scope.type === 'project') {
       if (!input.ownership.projectId) {
         return {
           clauses: ['1 = 0'],
@@ -92,21 +100,21 @@ export class MemoryRepository {
     }
   }
 
-  findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): MemoryEntity | null {
+  findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): Memory | null {
     const ownership = this.ownershipRepository.resolveReadScope(scope)
     const scopeFilter = this.buildScopeClauses({ ownership })
     const row = this.db
       .prepare(
         `
-          SELECT *
+          SELECT ${getMemorySelectColumns()}
           FROM memories
           WHERE ${scopeFilter.clauses.join(' AND ')} AND memory_type = ? AND subject_key = ? AND status IN ('candidate', 'active')
           LIMIT 1
         `,
       )
-      .get(...scopeFilter.params, type, subjectKey) as MemoryRow | undefined
+      .get(...scopeFilter.params, type, subjectKey) as SelectedMemoryRow | undefined
 
-    return row ? toRecord(row) : null
+    return row ? toMemory(row) : null
   }
 
   insert(input: {
@@ -126,7 +134,7 @@ export class MemoryRepository {
     strength?: number
     supersededBy?: string | null
     now: string
-  }): MemoryEntity {
+  }): Memory {
     const ownership = this.ownershipRepository.resolveWriteScope(input.scope, input.now)
     const id = input.id ?? randomUUID()
     const reinforcementCount = input.reinforcementCount ?? 1
@@ -194,7 +202,7 @@ export class MemoryRepository {
   }
 
   reinforce(input: {
-    memory: MemoryEntity
+    memory: Memory
     statement: string
     details?: string | null
     origin: MemoryOrigin
@@ -202,7 +210,7 @@ export class MemoryRepository {
     reinforcementCount: number
     policyVersion: string
     now: string
-  }): MemoryEntity {
+  }): Memory {
     const next = {
       ...input.memory,
       statement: input.statement,
@@ -245,7 +253,7 @@ export class MemoryRepository {
     scope: ScopeRef
     type?: MemoryType | null
     subject?: string | null
-  }): MemoryEntity[] {
+  }): Memory[] {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
     const scopeFilter = this.buildScopeClauses({ ownership })
     const clauses = [...scopeFilter.clauses, "status = 'active'"]
@@ -262,17 +270,17 @@ export class MemoryRepository {
     }
 
     const rows = this.db
-      .prepare(`SELECT * FROM memories WHERE ${clauses.join(' AND ')}`)
-      .all(...params) as MemoryRow[]
+      .prepare(`SELECT ${getMemorySelectColumns()} FROM memories WHERE ${clauses.join(' AND ')}`)
+      .all(...params) as SelectedMemoryRow[]
 
-    return rows.map(toRecord)
+    return rows.map(toMemory)
   }
 
   listFtsCandidates(input: {
     scope: ScopeRef
     type?: MemoryType | null
     query: string
-  }): MemoryEntity[] {
+  }): Memory[] {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
     const scopeFilter = this.buildScopeClauses({ ownership, scopeAlias: 'm' })
     const clauses = [...scopeFilter.clauses, "m.status = 'active'"]
@@ -286,7 +294,7 @@ export class MemoryRepository {
     const rows = this.db
       .prepare(
         `
-          SELECT m.*, bm25(memories_fts) AS rank
+          SELECT ${getMemorySelectColumns('m')}, bm25(memories_fts) AS rank
           FROM memories_fts
           JOIN memories m ON memories_fts.rowid = m.rowid
           WHERE memories_fts MATCH ?
@@ -296,7 +304,7 @@ export class MemoryRepository {
       )
       .all(...params) as MemoryRow[]
 
-    return rows.map(toRecord)
+    return rows.map(toMemory)
   }
 
   countActive(input: {
@@ -330,7 +338,7 @@ export class MemoryRepository {
     scope: ScopeRef
     type?: MemoryType | null
     limit?: number | null
-  }): MemoryEntity[] {
+  }): Memory[] {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
     const scopeFilter = this.buildScopeClauses({ ownership })
     const clauses = [...scopeFilter.clauses, "status = 'active'"]
@@ -348,24 +356,22 @@ export class MemoryRepository {
 
     const rows = this.db
       .prepare(
-        `SELECT * FROM memories WHERE ${clauses.join(' AND ')}${limitClause}`,
+        `SELECT ${getMemorySelectColumns()} FROM memories WHERE ${clauses.join(' AND ')}${limitClause}`,
       )
-      .all(...params) as MemoryRow[]
+      .all(...params) as SelectedMemoryRow[]
 
-    return rows.map(toRecord)
+    return rows.map(toMemory)
   }
 
   listStaleMemories(input: {
     cutoffByScope: Record<ScopeType, string>
     limit?: number | null
-  }): MemoryEntity[] {
+  }): Memory[] {
     const params: Array<string | number> = [
       input.cutoffByScope.user,
-      input.cutoffByScope.repo,
-      input.cutoffByScope.org,
+      input.cutoffByScope.project,
       input.cutoffByScope.user,
-      input.cutoffByScope.repo,
-      input.cutoffByScope.org,
+      input.cutoffByScope.project,
     ]
     const limitClause = input.limit != null ? ' LIMIT ?' : ''
 
@@ -376,19 +382,17 @@ export class MemoryRepository {
     const rows = this.db
       .prepare(
         `
-          SELECT *
+          SELECT ${getMemorySelectColumns()}
           FROM memories
           WHERE status IN ('candidate', 'active')
             AND last_reinforced_at <= CASE scope_type
               WHEN 'user' THEN ?
-              WHEN 'repo' THEN ?
               ELSE ?
             END
             AND (
               last_retrieved_at IS NULL
               OR last_retrieved_at <= CASE scope_type
                 WHEN 'user' THEN ?
-                WHEN 'repo' THEN ?
                 ELSE ?
               END
             )
@@ -396,16 +400,16 @@ export class MemoryRepository {
           ${limitClause}
         `,
       )
-      .all(...params) as MemoryRow[]
+      .all(...params) as SelectedMemoryRow[]
 
-    return rows.map(toRecord)
+    return rows.map(toMemory)
   }
 
   listForMaintenance(input: {
     scope?: ScopeRef | null
     floor: number
     limit: number
-  }): MemoryEntity[] {
+  }): Memory[] {
     const clauses = ["status = 'active'", 'last_retrieved_at IS NOT NULL', 'strength > ?']
     const params: Array<string | number> = [input.floor]
 
@@ -421,15 +425,15 @@ export class MemoryRepository {
     const rows = this.db
       .prepare(
         `
-          SELECT * FROM memories
+          SELECT ${getMemorySelectColumns()} FROM memories
           WHERE ${clauses.join(' AND ')}
           ORDER BY last_retrieved_at ASC
           LIMIT ?
         `,
       )
-      .all(...params) as MemoryRow[]
+      .all(...params) as SelectedMemoryRow[]
 
-    return rows.map(toRecord)
+    return rows.map(toMemory)
   }
 
   flushStrength(input: {
@@ -448,17 +452,19 @@ export class MemoryRepository {
       .run(input.strength, input.now, input.id)
   }
 
-  getById(id: string): MemoryEntity | null {
-    const row = this.db.prepare('SELECT * FROM memories WHERE id = ? LIMIT 1').get(id) as MemoryRow | undefined
+  getById(id: string): Memory | null {
+    const row = this.db
+      .prepare(`SELECT ${getMemorySelectColumns()} FROM memories WHERE id = ? LIMIT 1`)
+      .get(id) as SelectedMemoryRow | undefined
 
-    return row ? toRecord(row) : null
+    return row ? toMemory(row) : null
   }
 
   softDelete(input: {
-    memory: MemoryEntity
+    memory: Memory
     now: string
-  }): MemoryEntity {
-    const next: MemoryEntity = {
+  }): Memory {
+    const next: Memory = {
       ...input.memory,
       status: 'deleted',
       updatedAt: input.now,
@@ -481,7 +487,7 @@ export class MemoryRepository {
   archiveMemoryIfLive(input: {
     id: string
     now: string
-  }): MemoryEntity | null {
+  }): Memory | null {
     const result = this.db
       .prepare(
         `
@@ -505,13 +511,13 @@ export class MemoryRepository {
   }
 
   updateRetrievalState(input: {
-    memory: MemoryEntity
+    memory: Memory
     retrievalCount: number
     lastRetrievedAt: string | null
     strength: number
     now: string
-  }): MemoryEntity {
-    const next: MemoryEntity = {
+  }): Memory {
+    const next: Memory = {
       ...input.memory,
       retrievalCount: input.retrievalCount,
       lastRetrievedAt: input.lastRetrievedAt,
@@ -532,10 +538,10 @@ export class MemoryRepository {
   }
 
   suppress(input: {
-    memory: MemoryEntity
+    memory: Memory
     now: string
-  }): MemoryEntity {
-    const next: MemoryEntity = {
+  }): Memory {
+    const next: Memory = {
       ...input.memory,
       status: 'suppressed',
       updatedAt: input.now,
@@ -555,11 +561,11 @@ export class MemoryRepository {
   }
 
   setSupersededBy(input: {
-    memory: MemoryEntity
+    memory: Memory
     supersededBy: string
     now: string
-  }): MemoryEntity {
-    const next: MemoryEntity = {
+  }): Memory {
+    const next: Memory = {
       ...input.memory,
       supersededBy: input.supersededBy,
       updatedAt: input.now,

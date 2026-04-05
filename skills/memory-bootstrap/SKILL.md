@@ -4,7 +4,7 @@ Use this procedure to prime Hippocampus memory at the start of a new thread and 
 
 ## Startup Sequence
 - Call `memory-get-policy` first.
-- If the current work is in a repository, call `memory-list` for repo scope.
+- If the current work is in a repository, call `project ensure` first, then call `memory-list` for project scope.
 - Call `memory-list` for user scope using the user scope id that actually matches the durable preference namespace you want.
 - If the task has a clear durable subject, call `memory-search` before making assumptions.
 
@@ -15,7 +15,7 @@ Use this procedure to prime Hippocampus memory at the start of a new thread and 
 - Do not save transient task state, one-off debugging breadcrumbs, branch names, or speculative guesses.
 
 ## Scope
-- Treat repo scope like a repo-local `AGENTS.md`.
+- Treat project scope like a project-local `AGENTS.md`.
 - Treat user scope like a global `AGENTS.md`.
 - Use the narrowest scope that will remain useful later.
 

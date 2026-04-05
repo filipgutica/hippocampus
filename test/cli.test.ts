@@ -88,6 +88,24 @@ const createIo = () => {
   }
 }
 
+const ensureProjectScope = async (cwd: string): Promise<string> => {
+  const io = createIo()
+  await withCwd(cwd, async () => {
+    await runCli(['project', 'ensure', '--json'], io.io)
+  })
+
+  const ensured = JSON.parse(io.getStdout().trim()) as {
+    project?: { scope?: { id?: string } }
+  }
+
+  const projectScopeId = ensured.project?.scope?.id
+  if (!projectScopeId) {
+    throw new Error('Expected project ensure to return a project scope id.')
+  }
+
+  return projectScopeId
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
@@ -100,19 +118,31 @@ afterEach(() => {
 describe('runCli', () => {
   it('applies and searches memories using command-line flags', async () => {
     const home = createTempDir()
-    const scopeId = '/tmp/example-repo'
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
+    let ensuredProjectId = ''
 
     await withAppHome(home, async () => {
       const initIo = createIo()
       const applyIo = createIo()
       await runCli(['init'], initIo.io)
+      const ensureIo = createIo()
+      await withCwd(repoRoot, async () => {
+        await runCli(['project', 'ensure', '--json'], ensureIo.io)
+      })
+
+      const ensured = JSON.parse(ensureIo.getStdout().trim()) as {
+        project?: { scope?: { id?: string } }
+      }
+      ensuredProjectId = ensured.project?.scope?.id ?? ''
+
       await runCli(
         [
           'apply',
           '--scope-type',
-          'repo',
+          'project',
           '--scope-id',
-          scopeId,
+          ensuredProjectId,
           '--type',
           'preference',
           '--origin',
@@ -120,7 +150,7 @@ describe('runCli', () => {
           '--subject',
           ' Prefer pnpm ',
           '--statement',
-          'Use pnpm for this repo.',
+          'Use pnpm for this project.',
         ],
         applyIo.io,
       )
@@ -136,7 +166,7 @@ describe('runCli', () => {
 
       try {
         const result = await app.memoryService.searchMemories({
-          scope: { type: 'repo', id: scopeId },
+          scope: { type: 'project', id: ensuredProjectId },
           subject: 'prefer pnpm',
           matchMode: 'exact',
           limit: 10,
@@ -153,24 +183,63 @@ describe('runCli', () => {
     })
   })
 
+  it('ensures the current project identity from the CLI', async () => {
+    const home = createTempDir()
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
+
+    await withAppHome(home, async () => {
+      const initIo = createIo()
+      await runCli(['init'], initIo.io)
+
+      const io = createIo()
+
+      await withCwd(repoRoot, async () => {
+        await runCli(['project', 'ensure', '--json'], io.io)
+      })
+
+      const ensured = JSON.parse(io.getStdout().trim()) as {
+        project?: {
+          scope?: {
+            type: string
+            id: string
+          }
+          path?: string
+          ensured?: boolean
+        }
+      }
+
+      expect(ensured.project?.scope?.type).toBe('project')
+      expect(ensured.project?.scope?.id).toBeTruthy()
+      expect(ensured.project?.path).toBe(fs.realpathSync(repoRoot))
+      expect(ensured.project?.ensured).toBe(true)
+    })
+  })
+
   it('requires subject for the CLI search command', async () => {
     const home = createTempDir()
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
 
     await withAppHome(home, async () => {
       await runCli(['init'], createIo().io)
+      const projectScopeId = await ensureProjectScope(repoRoot)
 
       await expect(
-        runCli(['search', '--scope-type', 'repo', '--scope-id', '/tmp/example-repo'], createIo().io),
+        runCli(['search', '--scope-type', 'project', '--scope-id', projectScopeId], createIo().io),
       ).rejects.toThrow('subject must not be empty for memory-search.')
     })
   })
 
   it('applies JSON input without requiring a CLI subject flag', async () => {
     const home = createTempDir()
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
 
     await withAppHome(home, async () => {
       const initIo = createIo()
       await runCli(['init'], initIo.io)
+      const projectScopeId = await ensureProjectScope(repoRoot)
 
       const applyIo = createIo()
       await runCli(
@@ -178,10 +247,10 @@ describe('runCli', () => {
           'apply',
           '--input',
           JSON.stringify({
-            scope: { type: 'repo', id: '/tmp/example-repo' },
+            scope: { type: 'project', id: projectScopeId },
             type: 'preference',
             subject: 'Prefer pnpm',
-            statement: 'Use pnpm for this repo.',
+            statement: 'Use pnpm for this project.',
             origin: 'explicit_user_statement',
           }),
           '--json',
@@ -214,10 +283,10 @@ describe('runCli', () => {
             effectiveMatchMode: 'exact',
             fallbackReason: 'Semantic retrieval unavailable; returned exact results only.',
           }),
-        },
+      },
       } as unknown as RuntimeApp,
       {
-        scope: { type: 'repo', id: '/tmp/example-repo' },
+        scope: { type: 'project', id: '/tmp/example-project' },
         subject: 'prefer pnpm',
         limit: 10,
       },
@@ -233,18 +302,20 @@ describe('runCli', () => {
 
   it('lists, inspects, shows history, and deletes memories via the CLI', async () => {
     const home = createTempDir()
-    const scopeId = '/tmp/example-repo'
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
 
     await withAppHome(home, async () => {
       const initIo = createIo()
       await runCli(['init'], initIo.io)
+      const scopeId = await ensureProjectScope(repoRoot)
 
       const applyIo = createIo()
       await runCli(
         [
           'apply',
           '--scope-type',
-          'repo',
+          'project',
           '--scope-id',
           scopeId,
           '--type',
@@ -254,7 +325,7 @@ describe('runCli', () => {
           '--subject',
           'Prefer pnpm',
           '--statement',
-          'Use pnpm for this repo.',
+          'Use pnpm for this project.',
           '--json',
         ],
         applyIo.io,
@@ -268,7 +339,7 @@ describe('runCli', () => {
       expect(memoryId).toBeTruthy()
 
       const listIo = createIo()
-      await runCli(['memories', 'list', '--scope-type', 'repo', '--scope-id', scopeId, '--json'], listIo.io)
+      await runCli(['memories', 'list', '--scope-type', 'project', '--scope-id', scopeId, '--json'], listIo.io)
       const listResult = JSON.parse(listIo.getStdout().trim()) as { total: number }
       expect(listResult.total).toBe(1)
 
@@ -308,7 +379,7 @@ describe('runCli', () => {
 
       try {
         const result = await app.memoryService.searchMemories({
-          scope: { type: 'repo', id: scopeId },
+          scope: { type: 'project', id: scopeId },
           subject: 'prefer pnpm',
           matchMode: 'exact',
           limit: 10,
@@ -364,14 +435,14 @@ describe('runCli', () => {
       const dryRunResult = JSON.parse(dryRunIo.getStdout().trim()) as {
         dryRun: boolean
         olderThanDays: number | null
-        cutoffByScope: Record<'user' | 'repo' | 'org', string>
+        cutoffByScope: Record<'user' | 'project', string>
         total: number
         items: Array<{ status: string }>
       }
 
       expect(dryRunResult.dryRun).toBe(true)
       expect(dryRunResult.olderThanDays).toBeNull()
-      expect(Object.keys(dryRunResult.cutoffByScope)).toEqual(['user', 'repo', 'org'])
+      expect(Object.keys(dryRunResult.cutoffByScope)).toEqual(['user', 'project'])
       expect(dryRunResult.total).toBe(1)
       expect(dryRunResult.items[0]?.status).toBe('active')
 
@@ -380,14 +451,14 @@ describe('runCli', () => {
       const archiveResult = JSON.parse(archiveIo.getStdout().trim()) as {
         dryRun: boolean
         olderThanDays: number | null
-        cutoffByScope: Record<'user' | 'repo' | 'org', string>
+        cutoffByScope: Record<'user' | 'project', string>
         total: number
         items: Array<{ status: string; id: string }>
       }
 
       expect(archiveResult.dryRun).toBe(false)
       expect(archiveResult.olderThanDays).toBeNull()
-      expect(Object.keys(archiveResult.cutoffByScope)).toEqual(['user', 'repo', 'org'])
+      expect(Object.keys(archiveResult.cutoffByScope)).toEqual(['user', 'project'])
       expect(archiveResult.total).toBe(1)
       expect(archiveResult.items[0]?.status).toBe('archived')
 
@@ -423,7 +494,7 @@ describe('runCli', () => {
           '--subject',
           'Prefer pnpm',
           '--statement',
-          'Use pnpm for this repo.',
+          'Use pnpm for this project.',
           '--json',
         ],
         applyIo.io,
@@ -458,7 +529,7 @@ describe('runCli', () => {
           '--subject',
           'Prefer pnpm',
           '--statement',
-          'Use pnpm for this repo.',
+          'Use pnpm for this project.',
           '--json',
         ],
         reapplyIo.io,
@@ -479,17 +550,19 @@ describe('runCli', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const home = createTempDir()
-    const scopeId = '/tmp/example-repo'
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
 
     await withAppHome(home, async () => {
       await runCli(['init'], createIo().io)
+      const scopeId = await ensureProjectScope(repoRoot)
 
       const applyIo = createIo()
       await runCli(
         [
           'apply',
           '--scope-type',
-          'repo',
+          'project',
           '--scope-id',
           scopeId,
           '--type',
@@ -513,7 +586,7 @@ describe('runCli', () => {
       await runCli(['memories', 'archive-stale', '--older-than-days', '60', '--json'], archiveIo.io)
       const archiveResult = JSON.parse(archiveIo.getStdout().trim()) as {
         olderThanDays: number
-        cutoffByScope: Record<'user' | 'repo' | 'org', string>
+        cutoffByScope: Record<'user' | 'project', string>
         total: number
         items: Array<{ id: string; status: string }>
       }
@@ -528,17 +601,19 @@ describe('runCli', () => {
 
   it('prompts for memory id and confirmation before deleting in an interactive terminal', async () => {
     const home = createTempDir()
-    const scopeId = '/tmp/example-repo'
+    const repoRoot = path.join(home, 'repo')
+    initializeGitRepo(repoRoot)
 
     await withAppHome(home, async () => {
       await runCli(['init'], createIo().io)
+      const scopeId = await ensureProjectScope(repoRoot)
 
       const applyIo = createIo()
       await runCli(
         [
           'apply',
           '--scope-type',
-          'repo',
+          'project',
           '--scope-id',
           scopeId,
           '--type',
@@ -548,7 +623,7 @@ describe('runCli', () => {
           '--subject',
           'Prefer pnpm',
           '--statement',
-          'Use pnpm for this repo.',
+          'Use pnpm for this project.',
           '--json',
         ],
         applyIo.io,
@@ -586,7 +661,7 @@ describe('runCli', () => {
     })
   })
 
-  it('canonicalizes repo scope ids consistently between CLI writes and MCP reads', async () => {
+  it('canonicalizes project scope ids consistently between CLI writes and MCP reads', async () => {
     const home = createTempDir()
     const repoRoot = path.join(home, 'repo')
     const repoSymlink = path.join(home, 'repo-link')
@@ -597,13 +672,14 @@ describe('runCli', () => {
     await withAppHome(home, async () => {
       const initIo = createIo()
       await runCli(['init'], initIo.io)
+      const scopeId = await ensureProjectScope(repoRoot)
 
       const applyIo = createIo()
       await runCli(
         [
           'apply',
           '--scope-type',
-          'repo',
+          'project',
           '--scope-id',
           `${repoSymlink}${path.sep}`,
           '--type',
@@ -613,7 +689,7 @@ describe('runCli', () => {
           '--subject',
           'Prefer pnpm',
           '--statement',
-          'Use pnpm for this repo.',
+          'Use pnpm for this project.',
           '--json',
         ],
         applyIo.io,
@@ -639,7 +715,7 @@ describe('runCli', () => {
         const searched = await client.callTool({
           name: 'memory-search',
           arguments: {
-            scope: { type: 'repo', id: repoRoot },
+            scope: { type: 'project', id: scopeId },
             subject: 'prefer pnpm',
             matchMode: 'exact',
             limit: 10,
@@ -652,7 +728,7 @@ describe('runCli', () => {
         ) as { total: number; items: Array<{ scope: { id: string } }> }
 
         expect(searchResult.total).toBe(1)
-        expect(searchResult.items[0]?.scope.id).toBe(fs.realpathSync(repoRoot))
+        expect(searchResult.items[0]?.scope.id).toBe(scopeId)
       } finally {
         await client.close()
         await mcp.server.close()
@@ -661,7 +737,7 @@ describe('runCli', () => {
     })
   })
 
-  it('keeps explicit repo subdirectory scopes distinct while CLI omitted scope id still resolves to repo root', async () => {
+  it('keeps omitted project scope ids anchored to the project root even from a subdirectory', async () => {
     const home = createTempDir()
     const repoRoot = path.join(home, 'repo')
     const repoSubdir = path.join(repoRoot, 'packages', 'app')
@@ -672,6 +748,7 @@ describe('runCli', () => {
     await withAppHome(home, async () => {
       const initIo = createIo()
       await runCli(['init'], initIo.io)
+      const scopeId = await ensureProjectScope(repoRoot)
 
       await withCwd(repoSubdir, async () => {
         const applyIo = createIo()
@@ -710,25 +787,25 @@ describe('runCli', () => {
         await client.connect(clientTransport)
 
         const repoRootSearch = await app.memoryService.searchMemories({
-          scope: { type: 'repo', id: repoRoot },
+          scope: { type: 'project', id: scopeId },
           subject: 'run tests before commit',
           matchMode: 'exact',
           limit: 10,
         })
         const repoSubdirSearch = await app.memoryService.searchMemories({
-          scope: { type: 'repo', id: repoSubdir },
+          scope: { type: 'project', id: repoSubdir },
           subject: 'run tests before commit',
           matchMode: 'exact',
           limit: 10,
         })
 
         expect(repoRootSearch.total).toBe(1)
-        expect(repoSubdirSearch.total).toBe(0)
+        expect(repoSubdirSearch.total).toBe(1)
 
         await client.callTool({
           name: 'memory-apply-observation',
           arguments: {
-            scope: { type: 'repo', id: repoSubdir },
+            scope: { type: 'project', id: repoSubdir },
             type: 'procedural',
             subject: 'Use package-local scripts',
             statement: 'Use package-local scripts in this subdirectory.',
@@ -738,19 +815,19 @@ describe('runCli', () => {
         })
 
         const rootScopedMemory = await app.memoryService.searchMemories({
-          scope: { type: 'repo', id: repoRoot },
+          scope: { type: 'project', id: scopeId },
           subject: 'use package-local scripts',
           matchMode: 'exact',
           limit: 10,
         })
         const subdirScopedMemory = await app.memoryService.searchMemories({
-          scope: { type: 'repo', id: repoSubdir },
+          scope: { type: 'project', id: repoSubdir },
           subject: 'use package-local scripts',
           matchMode: 'exact',
           limit: 10,
         })
 
-        expect(rootScopedMemory.total).toBe(0)
+        expect(rootScopedMemory.total).toBe(1)
         expect(subdirScopedMemory.total).toBe(1)
       } finally {
         await client.close()

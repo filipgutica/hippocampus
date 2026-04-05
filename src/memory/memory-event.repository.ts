@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { desc, eq, inArray, sql } from 'drizzle-orm'
 import { AppError } from '../common/errors.js'
+import { createDrizzleDb } from '../common/db/drizzle.js'
+import { memoryEventsTable, type MemoryEventRow } from '../common/db/schema/index.js'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import {
   memoryDraftInputSchema,
@@ -8,7 +11,7 @@ import {
   type MemoryDraftInput,
   type ObservationSource,
 } from './dto/apply-observation.dto.js'
-import type { MemoryEventEntity } from './entities/memory-event.entity.js'
+import type { MemoryEvent } from './types/memory-event.js'
 import type { MemoryEventType, MemoryType } from './memory.types.js'
 
 type EventInsertInput = {
@@ -23,38 +26,24 @@ type EventInsertInput = {
   now: string
 }
 
-type EventRow = {
-  id: string
-  memory_id: string | null
-  event_type: MemoryEventType
-  scope_type: ScopeRef['type']
-  scope_id: string
-  memory_type: MemoryType
-  subject_key: string
-  observation_json: string
-  source_json: string | null
-  reason: string
-  created_at: string
-}
-
-type LatestEventRow = EventRow & {
+type LatestEventRow = MemoryEventRow & {
   row_number: number
 }
 
-const toRecord = (row: EventRow): MemoryEventEntity => ({
+const toMemoryEvent = (row: MemoryEventRow): MemoryEvent => ({
   id: row.id,
-  memoryId: row.memory_id,
-  eventType: row.event_type,
+  memoryId: row.memoryId,
+  eventType: row.eventType as MemoryEventType,
   scope: {
-    type: row.scope_type,
-    id: row.scope_id,
+    type: row.scopeType as ScopeRef['type'],
+    id: row.scopeId,
   },
-  type: row.memory_type,
-  subjectKey: row.subject_key,
-  observationJson: row.observation_json,
-  sourceJson: row.source_json,
+  type: row.memoryType as MemoryType,
+  subjectKey: row.subjectKey,
+  observationJson: row.observationJson,
+  sourceJson: row.sourceJson,
   reason: row.reason,
-  createdAt: row.created_at,
+  createdAt: row.createdAt,
 })
 
 const assertValidObservation = ({
@@ -96,13 +85,13 @@ const assertValidSource = ({
 }
 
 export class MemoryEventRepository {
-  private readonly db: InstanceType<typeof Database>
+  private readonly drizzleDb
 
   constructor(db: InstanceType<typeof Database>) {
-    this.db = db
+    this.drizzleDb = createDrizzleDb(db)
   }
 
-  insert(input: EventInsertInput): MemoryEventEntity {
+  insert(input: EventInsertInput): MemoryEvent {
     const id = randomUUID()
     const observation = assertValidObservation({
       observation: input.observation ?? null,
@@ -115,28 +104,22 @@ export class MemoryEventRepository {
     const observationJson = JSON.stringify(observation)
     const sourceJson = source ? JSON.stringify(source) : null
 
-    this.db
-      .prepare(
-        `
-          INSERT INTO memory_events (
-            id, memory_id, event_type, scope_type, scope_id, memory_type, subject_key,
-            observation_json, source_json, reason, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
+    this.drizzleDb
+      .insert(memoryEventsTable)
+      .values({
         id,
-        input.memoryId ?? null,
-        input.eventType,
-        input.scope.type,
-        input.scope.id,
-        input.type,
-        input.subjectKey,
+        memoryId: input.memoryId ?? null,
+        eventType: input.eventType,
+        scopeType: input.scope.type,
+        scopeId: input.scope.id,
+        memoryType: input.type,
+        subjectKey: input.subjectKey,
         observationJson,
         sourceJson,
-        input.reason,
-        input.now,
-      )
+        reason: input.reason,
+        createdAt: input.now,
+      })
+      .run()
 
     return {
       id,
@@ -152,46 +135,59 @@ export class MemoryEventRepository {
     }
   }
 
-  listByMemoryId(memoryId: string): MemoryEventEntity[] {
-    const rows = this.db
-      .prepare(
-        `
-          SELECT *
-          FROM memory_events
-          WHERE memory_id = ?
-          ORDER BY created_at ASC
-        `,
-      )
-      .all(memoryId) as EventRow[]
+  listByMemoryId(memoryId: string): MemoryEvent[] {
+    const rows = this.drizzleDb
+      .select({
+        id: memoryEventsTable.id,
+        memoryId: memoryEventsTable.memoryId,
+        eventType: memoryEventsTable.eventType,
+        scopeType: memoryEventsTable.scopeType,
+        scopeId: memoryEventsTable.scopeId,
+        memoryType: memoryEventsTable.memoryType,
+        subjectKey: memoryEventsTable.subjectKey,
+        observationJson: memoryEventsTable.observationJson,
+        sourceJson: memoryEventsTable.sourceJson,
+        reason: memoryEventsTable.reason,
+        createdAt: memoryEventsTable.createdAt,
+      })
+      .from(memoryEventsTable)
+      .where(eq(memoryEventsTable.memoryId, memoryId))
+      .orderBy(memoryEventsTable.createdAt)
+      .all() as MemoryEventRow[]
 
-    return rows.map(toRecord)
+    return rows.map(toMemoryEvent)
   }
 
-  listLatestByMemoryIds(memoryIds: string[]): MemoryEventEntity[] {
+  listLatestByMemoryIds(memoryIds: string[]): MemoryEvent[] {
     if (memoryIds.length === 0) {
       return []
     }
 
-    const placeholders = memoryIds.map(() => '?').join(', ')
-    const rows = this.db
-      .prepare(
-        `
-          SELECT *
-          FROM (
-            SELECT
-              *,
-              ROW_NUMBER() OVER (
-                PARTITION BY memory_id
-                ORDER BY created_at DESC, rowid DESC
-              ) AS row_number
-            FROM memory_events
-            WHERE memory_id IN (${placeholders})
-          )
-          WHERE row_number = 1
-        `,
-      )
-      .all(...memoryIds) as LatestEventRow[]
+    const rowNumber = sql<number>`ROW_NUMBER() OVER (
+      PARTITION BY ${memoryEventsTable.memoryId}
+      ORDER BY ${memoryEventsTable.createdAt} DESC, rowid DESC
+    )`
+    const latestEvents = this.drizzleDb
+      .select({
+        id: memoryEventsTable.id,
+        memoryId: memoryEventsTable.memoryId,
+        eventType: memoryEventsTable.eventType,
+        scopeType: memoryEventsTable.scopeType,
+        scopeId: memoryEventsTable.scopeId,
+        memoryType: memoryEventsTable.memoryType,
+        subjectKey: memoryEventsTable.subjectKey,
+        observationJson: memoryEventsTable.observationJson,
+        sourceJson: memoryEventsTable.sourceJson,
+        reason: memoryEventsTable.reason,
+        createdAt: memoryEventsTable.createdAt,
+        row_number: rowNumber,
+      })
+      .from(memoryEventsTable)
+      .where(inArray(memoryEventsTable.memoryId, memoryIds))
+      .orderBy(desc(memoryEventsTable.createdAt)) as unknown as { all: () => LatestEventRow[] }
 
-    return rows.map(toRecord)
+    const rows = latestEvents.all().filter(row => row.row_number === 1)
+
+    return rows.map(toMemoryEvent)
   }
 }

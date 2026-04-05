@@ -1,7 +1,7 @@
 import type { ScopeRef } from '../../common/types/scope-ref.js'
 import type { MemoryEventType, MemoryType } from '../memory.types.js'
 
-export type MemoryEventEntity = {
+export type MemoryEvent = {
   id: string
   memoryId: string | null
   eventType: MemoryEventType

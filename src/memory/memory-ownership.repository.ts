@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { AppError } from '../common/errors.js'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import { resolveCanonicalScopeId } from '../common/resolve-canonical-scope-id.js'
+import { ProjectRepository } from '../projects/project.repository.js'
 
 export type ResolvedMemoryOwnership = {
   userId: string
@@ -9,17 +10,15 @@ export type ResolvedMemoryOwnership = {
   scope: ScopeRef
 }
 
-type ProjectRow = {
-  id: string
-}
-
 export class MemoryOwnershipRepository {
   private readonly db: InstanceType<typeof Database>
   private readonly currentUserId: string
+  private readonly projectRepository: ProjectRepository
 
-  constructor(input: { db: InstanceType<typeof Database>; currentUserId: string }) {
+  constructor(input: { db: InstanceType<typeof Database>; currentUserId: string; projectRepository?: ProjectRepository }) {
     this.db = input.db
     this.currentUserId = input.currentUserId
+    this.projectRepository = input.projectRepository ?? new ProjectRepository(input.db)
   }
 
   ensureCurrentUser(now: string): void {
@@ -42,12 +41,9 @@ export class MemoryOwnershipRepository {
   }
 
   resolveReadScope(scope: ScopeRef): ResolvedMemoryOwnership {
-    const canonicalScope: ScopeRef = {
-      type: scope.type,
-      id: this.canonicalizeScope(scope).id,
-    }
+    const canonicalScope = this.canonicalizeScope(scope)
 
-    if (canonicalScope.type !== 'repo') {
+    if (canonicalScope.type !== 'project') {
       return {
         userId: this.currentUserId,
         projectId: null,
@@ -55,22 +51,15 @@ export class MemoryOwnershipRepository {
       }
     }
 
-    const existingProject = this.db
-      .prepare(
-        `
-          SELECT id
-          FROM projects
-          WHERE canonical_path = ?
-          LIMIT 1
-        `,
-      )
-      .get(canonicalScope.id) as ProjectRow | undefined
+    const existingProject =
+      this.projectRepository.getById(canonicalScope.id) ??
+      this.projectRepository.resolveExistingProjectForPath(canonicalScope.id)
 
     if (existingProject) {
       return {
         userId: this.currentUserId,
         projectId: existingProject.id,
-        scope: canonicalScope,
+        scope: existingProject.scope,
       }
     }
 
@@ -86,7 +75,7 @@ export class MemoryOwnershipRepository {
 
     const canonicalScope = this.canonicalizeScope(scope)
 
-    if (canonicalScope.type !== 'repo') {
+    if (canonicalScope.type !== 'project') {
       return {
         userId: this.currentUserId,
         projectId: null,
@@ -94,43 +83,20 @@ export class MemoryOwnershipRepository {
       }
     }
 
-    const existingProject = this.db
-      .prepare(
-        `
-          SELECT id
-          FROM projects
-          WHERE canonical_path = ?
-          LIMIT 1
-        `,
+    const existingProject =
+      this.projectRepository.getById(canonicalScope.id) ??
+      this.projectRepository.resolveExistingProjectForPath(canonicalScope.id)
+    if (!existingProject) {
+      throw new AppError(
+        'INVALID_SCOPE',
+        'Unknown project scope id. Run `hippo project ensure` first to register the current project.',
       )
-      .get(canonicalScope.id) as ProjectRow | undefined
-
-    if (existingProject) {
-      this.db
-        .prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
-        .run(now, existingProject.id)
-
-      return {
-        userId: this.currentUserId,
-        projectId: existingProject.id,
-        scope: canonicalScope,
-      }
     }
-
-    const projectId = randomUUID()
-    this.db
-      .prepare(
-        `
-          INSERT INTO projects (id, canonical_path, created_at, updated_at)
-          VALUES (?, ?, ?, ?)
-        `,
-      )
-      .run(projectId, canonicalScope.id, now, now)
 
     return {
       userId: this.currentUserId,
-      projectId,
-      scope: canonicalScope,
+      projectId: existingProject.id,
+      scope: existingProject.scope,
     }
   }
 }

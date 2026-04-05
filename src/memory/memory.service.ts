@@ -54,7 +54,7 @@ import type {
 } from './dto/memory-result.dto.js'
 import type { MemoryEventDto } from './dto/memory-event.dto.js'
 import type { LatestMemoryEventSummaryDto, MemoryDto } from './dto/memory.dto.js'
-import type { MemoryEntity } from './entities/memory.entity.js'
+import type { Memory } from './types/memory.js'
 import type { MemoryOrigin, MemoryType } from './memory.types.js'
 import type Database from 'better-sqlite3'
 import {
@@ -62,6 +62,8 @@ import {
   supportingGuidanceResources,
 } from '../guidance/guidance-catalog.js'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
+import type { EnsuredProject } from '../projects/project.types.js'
+import { ProjectRepository } from '../projects/project.repository.js'
 
 type MemoryServiceDeps = {
   embeddingProvider: EmbeddingProvider
@@ -69,12 +71,13 @@ type MemoryServiceDeps = {
   memoryRepository: MemoryRepository
   memoryEventRepository: MemoryEventRepository
   memoryRuntimeStateRepository: MemoryRuntimeStateRepository
+  projectRepository: ProjectRepository
   policyVersion: string
   db: InstanceType<typeof Database>
 }
 
 type ScoredMemory = {
-  memory: MemoryEntity
+  memory: Memory
   score: number
 }
 
@@ -307,7 +310,7 @@ type ArchiveStaleMemoriesInput = {
 
 type ScopeCutoffMap = Record<ScopeType, string>
 
-const scopeTypes: ScopeType[] = ['user', 'repo', 'org']
+const scopeTypes: ScopeType[] = ['user', 'project']
 
 /**
  * Normalizes a database event row into the parsed event model used by the API.
@@ -316,7 +319,7 @@ const toParsedEvent = (event: {
   id: string
   memoryId: string | null
   eventType: string
-  scope: { type: 'user' | 'repo' | 'org'; id: string }
+  scope: ScopeRef
   type: MemoryType
   subjectKey: string
   observationJson: string
@@ -383,8 +386,8 @@ const compareSearchMemories = ({
   right,
   now,
 }: {
-  left: MemoryEntity
-  right: MemoryEntity
+  left: Memory
+  right: Memory
   now: string
 }): number => {
   const leftStrength = getEffectiveRetrievalStrength({
@@ -435,10 +438,18 @@ export class MemoryService {
     this.deps = deps
   }
 
+  ensureProject(input: { path?: string | null }): EnsuredProject {
+    const now = new Date().toISOString()
+    return this.deps.projectRepository.ensureProjectForPath({
+      inputPath: input.path ?? process.cwd(),
+      now,
+    })
+  }
+
   /**
    * Hydrates memory rows with their latest event provenance summary.
    */
-  private enrichMemoryDtos(memories: MemoryEntity[]): MemoryDto[] {
+  private enrichMemoryDtos(memories: Memory[]): MemoryDto[] {
     if (memories.length === 0) {
       return []
     }
@@ -459,7 +470,7 @@ export class MemoryService {
   /**
    * Expands a memory response so contradicted memories include their replacement record.
    */
-  private createMemoryGetResult(memory: MemoryEntity): MemoryGetResult {
+  private createMemoryGetResult(memory: Memory): MemoryGetResult {
     if (!memory.supersededBy) {
       const [memoryDto] = this.enrichMemoryDtos([memory])
       return {
@@ -487,7 +498,7 @@ export class MemoryService {
   /**
    * Loads a memory and rejects edits when it has already been deleted or superseded.
    */
-  private assertMemoryEditable(id: string): MemoryEntity {
+  private assertMemoryEditable(id: string): Memory {
     const memory = this.deps.memoryRepository.getById(id)
     if (!memory) {
       throw new AppError('MEMORY_NOT_FOUND', `Memory not found: ${id}`)
@@ -644,8 +655,7 @@ export class MemoryService {
       },
       {
         user: now,
-        repo: now,
-        org: now,
+        project: now,
       },
     )
     const reason =
@@ -679,7 +689,7 @@ export class MemoryService {
       })
       const hasMoreStaleMemories = limit != null && staleMemories.length > limit
       const memoriesToArchive = hasMoreStaleMemories ? staleMemories.slice(0, limit) : staleMemories
-      const archivedMemories: MemoryEntity[] = []
+      const archivedMemories: Memory[] = []
 
       for (const staleMemory of memoriesToArchive) {
         const normalizedStrength = getEffectiveRetrievalStrength({
@@ -739,7 +749,7 @@ export class MemoryService {
   /**
    * Refreshes the cached embedding for a memory when its source text or model fingerprint changes.
    */
-  private async ensureMemoryEmbedding(memory: MemoryEntity, modelFingerprint: string): Promise<number[]> {
+  private async ensureMemoryEmbedding(memory: Memory, modelFingerprint: string): Promise<number[]> {
     const sourceText = getSemanticSourceText(memory)
     const sourceTextHash = getSourceTextHash(sourceText)
     const existing = this.deps.memoryEmbeddingRepository.getByMemoryId(memory.id)
@@ -776,7 +786,7 @@ export class MemoryService {
     query: string
     queryEmbedding: number[]
     now: string
-  }): Promise<MemoryEntity[]> {
+  }): Promise<Memory[]> {
     try {
       const candidates = this.deps.memoryRepository.listFtsCandidates({
         scope: input.scope,
@@ -814,7 +824,7 @@ export class MemoryService {
     type: MemoryType | null
     queryEmbedding: number[]
     now: string
-  }): Promise<MemoryEntity[]> {
+  }): Promise<Memory[]> {
     const candidates = this.deps.memoryRepository.list({
       scope: input.scope,
       type: input.type,
@@ -836,10 +846,10 @@ export class MemoryService {
    * Computes cosine similarity for each candidate and returns the surviving set in rank order.
    */
   private async scoreSemanticCandidates(input: {
-    candidates: MemoryEntity[]
+    candidates: Memory[]
     queryEmbedding: number[]
     now: string
-  }): Promise<MemoryEntity[]> {
+  }): Promise<Memory[]> {
     const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
     const embeddings = await Promise.all(
       input.candidates.map(candidate => this.ensureMemoryEmbedding(candidate, modelFingerprint)),
@@ -863,7 +873,7 @@ export class MemoryService {
   /**
    * Warms the embedding cache asynchronously without blocking the calling write path.
    */
-  private scheduleEagerEmbedding(memory: MemoryEntity): void {
+  private scheduleEagerEmbedding(memory: Memory): void {
     globalThis.queueMicrotask(() => {
       void (async () => {
         try {
@@ -884,7 +894,7 @@ export class MemoryService {
     type: MemoryType | null
     subject: string
     now: string
-  }): MemoryEntity[] {
+  }): Memory[] {
     return this.deps.memoryRepository
       .search({
         scope: input.scope,
@@ -903,7 +913,7 @@ export class MemoryService {
   /**
    * Applies retrieval bookkeeping to the items returned from a search result page.
    */
-  private persistSearchRetrievalState(items: MemoryEntity[], now: string): MemoryEntity[] {
+  private persistSearchRetrievalState(items: Memory[], now: string): Memory[] {
     if (items.length === 0) {
       return items
     }
@@ -1041,7 +1051,7 @@ export class MemoryService {
     })
 
     if ('memory' in result) {
-      const memory = result.memory as MemoryEntity
+      const memory = result.memory as Memory
       this.scheduleEagerEmbedding(memory)
 
       return {

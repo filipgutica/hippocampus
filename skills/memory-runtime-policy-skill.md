@@ -2,7 +2,7 @@
 
 Use this policy first when deciding whether to retrieve or save memory through Hippocampus.
 
-See `hippocampus://skills/memory-scope` for supporting guidance on choosing `repo`, `user`, or `org` scope.
+See `hippocampus://skills/memory-scope` for supporting guidance on choosing `user` or `project` scope.
 
 ## When to search memory
 - Search when a stable preference, convention, workflow, or project fact may change the next action.
@@ -11,7 +11,8 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 
 ## Bootstrap
 - At the start of every new thread, call `memory-get-policy` first.
-- Then call `memory-list` for repo scope when the current work is in a repository.
+- Then call `project ensure` when the current work is in a repository.
+- Then call `memory-list` for project scope using the ensured project scope id.
 - Then call `memory-list` for user scope to prime durable personal preferences and habits.
 - Use the caller's intended user scope id; do not assume the local OS username is the same as Hippocampus's configured local owner identity.
 - If the topic is clear and durable, call `memory-search` before making assumptions.
@@ -75,7 +76,7 @@ Engram mapping for the mental model:
 - Retrieval strength decays over time from `lastRetrievedAt` and is used only as a ranking tie-break after exact/semantic relevance.
 - Automatic stale archival requires both write-side and retrieval-side staleness.
 - A memory is stale only when `lastReinforcedAt` is beyond the threshold and `lastRetrievedAt` is either missing or beyond the threshold.
-- Default stale thresholds are scope-aware: `user` and `org` use 90 days, `repo` uses 365 days.
+- Default stale thresholds are scope-aware: `user` uses 90 days, `project` uses 365 days.
 - Automatic stale archival runs on a 24-hour cooldown before normal retrieval flows.
 - `memories maintain` (CLI) flushes decayed retrieval `strength` to the stored column for boosted active memories. Run it explicitly or on a schedule; it does not run automatically. Supports `--dry-run` to preview and `--batch-size` to control how many memories are processed per invocation.
 
@@ -88,11 +89,10 @@ Engram mapping for the mental model:
 - If an archived memory is contradicted, create a new active replacement rather than reviving the archived record.
 
 ## Choose scope deliberately
-- Use `repo` for repository-specific conventions, workflows, and stable project facts.
+- Use `project` for repository-specific conventions, workflows, and stable project facts.
 - Use `user` for durable personal preferences or habits that carry across repositories.
-- Use `org` only when the fact clearly belongs to a broader organizational context.
 - Prefer the narrowest scope that will still be useful later.
-- For `repo` scope, use the canonical absolute path to the repo root with symlinks resolved. Do not use a subdirectory path when the memory belongs to the repository as a whole.
+- For `project` scope, use the canonical project scope id returned by `project ensure`.
 
 ## When to save memory
 - Save information that is likely to matter again in a future run.
@@ -111,10 +111,10 @@ Engram mapping for the mental model:
 - If the fact is uncertain or still changing, wait until it stabilizes.
 
 ## Example flows
-- Retrieval flow: Before choosing a package manager command in a repo, search repo scope for subject `prefer pnpm`. If search degrades to exact and you need broader recall, use `memory-list` with `type = preference`. Only active memories will be returned.
-- Save flow: After confirming a repo convention like `This repository uses pnpm`, save it in repo scope with `origin = tool_observation`.
+- Retrieval flow: Before choosing a package manager command in a project, search project scope for subject `prefer pnpm`. If search degrades to exact and you need broader recall, use `memory-list` with `type = preference`. Only active memories will be returned.
+- Save flow: After confirming a project convention like `This project uses pnpm`, save it in project scope with `origin = tool_observation`.
 - Pattern flow: If the user repeatedly corrects long answers toward shorter ones, save that as `origin = observed_pattern` and expect it to remain `candidate` until reinforced enough to promote.
-- Contradiction flow: If an old memory says `Use pnpm for this repo.` but the repo has moved to npm, contradict the old memory so it becomes `suppressed` and points to the new active replacement.
+- Contradiction flow: If an old memory says `Use pnpm for this project.` but the project has moved to npm, contradict the old memory so it becomes `suppressed` and points to the new active replacement.
 - Skip flow: If you are in the middle of a one-off debugging session, do not save temporary stack traces, branch names, or test-specific notes.
 - Semantic search flow: `memory-search` uses cached `Xenova/bge-small-en-v1.5` artifacts under Hippocampus home and falls back to exact retrieval if semantic loading or download is unavailable.
 - Future note: a larger model may be appropriate for a future cloud/service offering, but that is not part of the local runtime policy today.

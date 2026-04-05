@@ -12,6 +12,7 @@ import { LocalEmbeddingProvider } from '../memory/local-embedding-provider.js'
 import { MEMORY_POLICY_VERSION } from '../memory/policies/memory.policy.js'
 import { MemoryService } from '../memory/memory.service.js'
 import { createMcpServer } from '../mcp/server.js'
+import { ProjectRepository } from '../projects/project.repository.js'
 
 export type AppBuildMode = 'init' | 'runtime'
 
@@ -64,9 +65,11 @@ export const buildApp = async (options: BuildAppOptions): Promise<AppContainer> 
       }
   const db = initializeDatabase(initResult.config.dbFile)
   assertRuntimeCompatibility({ config: initResult.config, db })
+  const projectRepository = new ProjectRepository(db)
   const memoryOwnershipRepository = new MemoryOwnershipRepository({
     db,
     currentUserId: initResult.config.currentUserId,
+    projectRepository,
   })
   const memoryEmbeddingRepository = new MemoryEmbeddingRepository(db)
   const memoryRepository = new MemoryRepository({
@@ -83,6 +86,7 @@ export const buildApp = async (options: BuildAppOptions): Promise<AppContainer> 
     memoryRepository,
     memoryEventRepository,
     memoryRuntimeStateRepository,
+    projectRepository,
     policyVersion: MEMORY_POLICY_VERSION,
     db,
   })

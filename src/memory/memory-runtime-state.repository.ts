@@ -1,40 +1,32 @@
 import type Database from 'better-sqlite3'
-
-type RuntimeStateRow = {
-  last_auto_archive_sweep_at: string | null
-}
+import { eq } from 'drizzle-orm'
+import { createDrizzleDb } from '../common/db/drizzle.js'
+import { memoryRuntimeStateTable } from '../common/db/schema/index.js'
 
 export class MemoryRuntimeStateRepository {
-  private readonly db: InstanceType<typeof Database>
+  private readonly drizzleDb
 
   constructor(db: InstanceType<typeof Database>) {
-    this.db = db
+    this.drizzleDb = createDrizzleDb(db)
   }
 
   getLastAutoArchiveSweepAt(): string | null {
-    const row = this.db
-      .prepare(
-        `
-          SELECT last_auto_archive_sweep_at
-          FROM memory_runtime_state
-          WHERE singleton = 1
-          LIMIT 1
-        `,
-      )
-      .get() as RuntimeStateRow | undefined
+    const row = this.drizzleDb
+      .select({
+        lastAutoArchiveSweepAt: memoryRuntimeStateTable.lastAutoArchiveSweepAt,
+      })
+      .from(memoryRuntimeStateTable)
+      .where(eq(memoryRuntimeStateTable.singleton, 1))
+      .get()
 
-    return row?.last_auto_archive_sweep_at ?? null
+    return row?.lastAutoArchiveSweepAt ?? null
   }
 
   setLastAutoArchiveSweepAt(at: string): void {
-    this.db
-      .prepare(
-        `
-          UPDATE memory_runtime_state
-          SET last_auto_archive_sweep_at = ?
-          WHERE singleton = 1
-        `,
-      )
-      .run(at)
+    this.drizzleDb
+      .update(memoryRuntimeStateTable)
+      .set({ lastAutoArchiveSweepAt: at })
+      .where(eq(memoryRuntimeStateTable.singleton, 1))
+      .run()
   }
 }

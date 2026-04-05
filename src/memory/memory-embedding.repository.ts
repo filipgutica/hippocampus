@@ -1,44 +1,31 @@
 import type Database from 'better-sqlite3'
-import type { MemoryEmbeddingEntity } from './entities/memory-embedding.entity.js'
-
-type MemoryEmbeddingRow = {
-  memory_id: string
-  model_id: string
-  model_fingerprint: string
-  embedding_json: string
-  source_text_hash: string
-  updated_at: string
-}
-
-const toRecord = (row: MemoryEmbeddingRow): MemoryEmbeddingEntity => ({
-  memoryId: row.memory_id,
-  modelId: row.model_id,
-  modelFingerprint: row.model_fingerprint,
-  embeddingJson: row.embedding_json,
-  sourceTextHash: row.source_text_hash,
-  updatedAt: row.updated_at,
-})
+import { eq } from 'drizzle-orm'
+import { createDrizzleDb } from '../common/db/drizzle.js'
+import { memoryEmbeddingsTable, type MemoryEmbeddingRow } from '../common/db/schema/index.js'
+import type { MemoryEmbedding } from './types/memory-embedding.js'
 
 export class MemoryEmbeddingRepository {
-  private readonly db: InstanceType<typeof Database>
+  private readonly drizzleDb
 
   constructor(db: InstanceType<typeof Database>) {
-    this.db = db
+    this.drizzleDb = createDrizzleDb(db)
   }
 
-  getByMemoryId(memoryId: string): MemoryEmbeddingEntity | null {
-    const row = this.db
-      .prepare(
-        `
-          SELECT memory_id, model_id, model_fingerprint, embedding_json, source_text_hash, updated_at
-          FROM memory_embeddings
-          WHERE memory_id = ?
-          LIMIT 1
-        `,
-      )
-      .get(memoryId) as MemoryEmbeddingRow | undefined
+  getByMemoryId(memoryId: string): MemoryEmbedding | null {
+    const row = this.drizzleDb
+      .select({
+        memoryId: memoryEmbeddingsTable.memoryId,
+        modelId: memoryEmbeddingsTable.modelId,
+        modelFingerprint: memoryEmbeddingsTable.modelFingerprint,
+        embeddingJson: memoryEmbeddingsTable.embeddingJson,
+        sourceTextHash: memoryEmbeddingsTable.sourceTextHash,
+        updatedAt: memoryEmbeddingsTable.updatedAt,
+      })
+      .from(memoryEmbeddingsTable)
+      .where(eq(memoryEmbeddingsTable.memoryId, memoryId))
+      .get() as MemoryEmbeddingRow | undefined
 
-    return row ? toRecord(row) : null
+    return row ?? null
   }
 
   upsert(input: {
@@ -48,21 +35,28 @@ export class MemoryEmbeddingRepository {
     embeddingJson: string
     sourceTextHash: string
     updatedAt: string
-  }): MemoryEmbeddingEntity {
-    this.db
-      .prepare(
-        `
-          INSERT INTO memory_embeddings (memory_id, model_id, model_fingerprint, embedding_json, source_text_hash, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(memory_id) DO UPDATE SET
-            model_id = excluded.model_id,
-            model_fingerprint = excluded.model_fingerprint,
-            embedding_json = excluded.embedding_json,
-            source_text_hash = excluded.source_text_hash,
-            updated_at = excluded.updated_at
-        `,
-      )
-      .run(input.memoryId, input.modelId, input.modelFingerprint, input.embeddingJson, input.sourceTextHash, input.updatedAt)
+  }): MemoryEmbedding {
+    this.drizzleDb
+      .insert(memoryEmbeddingsTable)
+      .values({
+        memoryId: input.memoryId,
+        modelId: input.modelId,
+        modelFingerprint: input.modelFingerprint,
+        embeddingJson: input.embeddingJson,
+        sourceTextHash: input.sourceTextHash,
+        updatedAt: input.updatedAt,
+      })
+      .onConflictDoUpdate({
+        target: memoryEmbeddingsTable.memoryId,
+        set: {
+          modelId: input.modelId,
+          modelFingerprint: input.modelFingerprint,
+          embeddingJson: input.embeddingJson,
+          sourceTextHash: input.sourceTextHash,
+          updatedAt: input.updatedAt,
+        },
+      })
+      .run()
 
     return {
       memoryId: input.memoryId,

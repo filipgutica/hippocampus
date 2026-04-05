@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -15,6 +16,7 @@ import { MemoryRepository } from '../src/memory/memory.repository.js'
 import { MemoryRuntimeStateRepository } from '../src/memory/memory-runtime-state.repository.js'
 import { MemoryService } from '../src/memory/memory.service.js'
 import { getSemanticSourceText, getSourceTextHash } from '../src/memory/semantic-search.js'
+import { ProjectRepository } from '../src/projects/project.repository.js'
 
 const tempDirs: string[] = []
 
@@ -28,6 +30,20 @@ const flushAsyncWork = async (ticks = 3): Promise<void> => {
   for (let index = 0; index < ticks; index += 1) {
     await Promise.resolve()
   }
+}
+
+const initializeGitRepo = (repoRoot: string): void => {
+  fs.mkdirSync(repoRoot, { recursive: true })
+  execFileSync('git', ['init'], {
+    cwd: repoRoot,
+    stdio: 'ignore',
+  })
+}
+
+const createEnsuredProjectScope = (service: MemoryService): ScopeRef => {
+  const repoRoot = createTempDir()
+  initializeGitRepo(repoRoot)
+  return service.ensureProject({ path: repoRoot }).scope
 }
 
 afterEach(() => {
@@ -46,9 +62,11 @@ const createService = (options?: {
   const dbFile = path.join(dir, 'hippocampus.db')
   const db = initializeDatabase(dbFile)
   const memoryRuntimeStateRepository = new MemoryRuntimeStateRepository(db)
+  const projectRepository = new ProjectRepository(db)
   const ownershipRepository = new MemoryOwnershipRepository({
     db,
     currentUserId: randomUUID(),
+    projectRepository,
   })
   ownershipRepository.ensureCurrentUser(new Date().toISOString())
   const memoryRepository = new MemoryRepository({
@@ -89,19 +107,79 @@ const createService = (options?: {
       },
     }
 
+  const service = new MemoryService({
+    embeddingProvider,
+    memoryEmbeddingRepository: new MemoryEmbeddingRepository(db),
+    memoryRepository,
+    memoryEventRepository: new MemoryEventRepository(db),
+    memoryRuntimeStateRepository,
+    projectRepository,
+    policyVersion: MEMORY_POLICY_VERSION,
+    db,
+  })
+
+  const ensuredProjectScopes = new Map<string, ScopeRef>()
+
+  const resolveScope = (scope: ScopeRef): ScopeRef => {
+    if (scope.type !== 'project') {
+      return scope
+    }
+
+    if (/^[0-9a-f-]{36}$/i.test(scope.id)) {
+      return scope
+    }
+
+    const existingScope = ensuredProjectScopes.get(scope.id)
+    if (existingScope) {
+      return existingScope
+    }
+
+    const ensuredScope = createEnsuredProjectScope(service)
+    ensuredProjectScopes.set(scope.id, ensuredScope)
+    return ensuredScope
+  }
+
   return {
     db,
     memoryRuntimeStateRepository,
     embeddingProvider,
-    service: new MemoryService({
-      embeddingProvider,
-      memoryEmbeddingRepository: new MemoryEmbeddingRepository(db),
-      memoryRepository,
-      memoryEventRepository: new MemoryEventRepository(db),
-      memoryRuntimeStateRepository,
-      policyVersion: MEMORY_POLICY_VERSION,
-      db,
-    }),
+    service: {
+      ...service,
+      ensureProject: service.ensureProject.bind(service),
+      applyObservation: (input: Parameters<MemoryService['applyObservation']>[0]) =>
+        service.applyObservation({
+          ...input,
+          scope: resolveScope(input.scope),
+        }),
+      searchMemories: (input: Parameters<MemoryService['searchMemories']>[0]) =>
+        service.searchMemories({
+          ...input,
+          scope: resolveScope(input.scope),
+        }),
+      listMemories: (input: Parameters<MemoryService['listMemories']>[0]) =>
+        service.listMemories({
+          ...input,
+          scope: resolveScope(input.scope),
+        }),
+      contradictMemory: (input: Parameters<MemoryService['contradictMemory']>[0]) =>
+        service.contradictMemory({
+          ...input,
+          replacement: {
+            ...input.replacement,
+            scope: resolveScope(input.replacement.scope),
+          },
+        }),
+      runMaintenance: (input: Parameters<MemoryService['runMaintenance']>[0]) =>
+        service.runMaintenance({
+          ...input,
+          scope: input.scope ? resolveScope(input.scope) : null,
+        }),
+      archiveStaleMemories: service.archiveStaleMemories.bind(service),
+      getMemory: service.getMemory.bind(service),
+      getMemoryHistory: service.getMemoryHistory.bind(service),
+      deleteMemory: service.deleteMemory.bind(service),
+      getPolicy: service.getPolicy.bind(service),
+    } as MemoryService,
     memoryRepository,
   }
 }
@@ -167,13 +245,13 @@ const insertMemoryEventRow = (
 describe('MemoryService', () => {
   it('classifies, promotes, contradicts, and deletes scoped memories', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     const first = service.applyObservation({
       scope,
       type: 'preference',
       subject: ' Prefer pnpm ',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'observed_pattern',
       source: { channel: 'cli' },
     })
@@ -181,7 +259,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'observed_pattern',
       source: { channel: 'cli' },
     })
@@ -189,7 +267,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -214,7 +292,7 @@ describe('MemoryService', () => {
         scope,
         type: 'preference',
         subject: 'Prefer npm',
-        statement: 'Use npm for this repo.',
+        statement: 'Use npm for this project.',
         origin: 'explicit_user_statement',
         details: null,
       },
@@ -268,14 +346,16 @@ describe('MemoryService', () => {
     expect(memory.supersededByMemory).toBeNull()
     expect(memory.latestEventSummary?.eventType).toBe('reinforced')
     expect(memory.latestEventSummary?.source).toEqual({ channel: 'cli' })
-    expect(historyBeforeDelete.items[0]?.observation).toEqual({
-      scope,
-      type: 'preference',
-      subject: ' Prefer pnpm ',
-      statement: 'Use pnpm for this repo.',
-      origin: 'observed_pattern',
-      details: null,
-    })
+    expect(historyBeforeDelete.items[0]?.observation).toEqual(
+      expect.objectContaining({
+        scope: expect.objectContaining({ type: 'project' }),
+        type: 'preference',
+        subject: ' Prefer pnpm ',
+        statement: 'Use pnpm for this project.',
+        origin: 'observed_pattern',
+        details: null,
+      }),
+    )
     expect(historyBeforeDelete.items[0]?.observation).not.toHaveProperty('source')
     expect(historyBeforeDelete.items.map(item => item.eventType)).toEqual(['created', 'reinforced', 'reinforced'])
     expect(contradicted.contradictedMemory.status).toBe('suppressed')
@@ -306,7 +386,7 @@ describe('MemoryService', () => {
 
   it('fails deterministically for missing, invalid, or already superseded memories', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -395,12 +475,12 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -450,7 +530,7 @@ describe('MemoryService', () => {
 
   it('keeps memory-list, memory-get, and history reads retrieval-neutral', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -478,12 +558,12 @@ describe('MemoryService', () => {
 
   it('fails when stored event observation JSON is malformed', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -511,12 +591,12 @@ describe('MemoryService', () => {
 
   it('fails when stored event source JSON is malformed on history and latest-event reads', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -560,12 +640,12 @@ describe('MemoryService', () => {
 
   it('fails when stored event source JSON uses legacy runId provenance', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -608,12 +688,12 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -626,7 +706,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -643,12 +723,12 @@ describe('MemoryService', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const first = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -656,7 +736,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer npm',
-      statement: 'Use npm for this repo.',
+      statement: 'Use npm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -711,12 +791,12 @@ describe('MemoryService', () => {
         },
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const pnpm = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -724,7 +804,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer npm',
-      statement: 'Use npm for this repo.',
+      statement: 'Use npm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -779,13 +859,13 @@ describe('MemoryService', () => {
         },
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -793,7 +873,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer npm',
-      statement: 'Use npm for this repo.',
+      statement: 'Use npm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -856,13 +936,13 @@ describe('MemoryService', () => {
         },
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -906,12 +986,12 @@ describe('MemoryService', () => {
         embed: async () => [1, 0, 0],
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -964,7 +1044,7 @@ describe('MemoryService', () => {
         },
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -1010,12 +1090,12 @@ describe('MemoryService', () => {
         embed: async input => (input.toLowerCase().includes('package manager') ? [1, 0, 0] : currentEmbedding),
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1056,13 +1136,13 @@ describe('MemoryService', () => {
 
   it('eagerly embeds memories after create commits', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1085,13 +1165,13 @@ describe('MemoryService', () => {
 
   it('refreshes eager embeddings after a reinforce changes the text', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1138,13 +1218,13 @@ describe('MemoryService', () => {
         embed: async () => [0, 0, 1],
       },
     })
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1183,7 +1263,7 @@ describe('MemoryService', () => {
     })
     const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
     const listSpy = vi.spyOn(memoryRepository, 'list')
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     service.applyObservation({
       scope,
@@ -1222,13 +1302,13 @@ describe('MemoryService', () => {
     const { db, service, memoryRepository } = createService()
     const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
     const listSpy = vi.spyOn(memoryRepository, 'list')
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1252,13 +1332,13 @@ describe('MemoryService', () => {
     const { db, service, memoryRepository } = createService()
     const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
     const listSpy = vi.spyOn(memoryRepository, 'list')
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1280,7 +1360,7 @@ describe('MemoryService', () => {
 
   it('keeps archived memories out of the FTS-backed search results', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     const created = service.applyObservation({
       scope,
@@ -1317,13 +1397,13 @@ describe('MemoryService', () => {
 
   it('does not churn the FTS index when search updates retrieval state', async () => {
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     const created = service.applyObservation({
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1355,7 +1435,7 @@ describe('MemoryService', () => {
     const { db, service, memoryRepository } = createService()
     const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
     const listSpy = vi.spyOn(memoryRepository, 'list')
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
 
     for (let index = 0; index < 201; index += 1) {
       service.applyObservation({
@@ -1410,7 +1490,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1442,7 +1522,7 @@ describe('MemoryService', () => {
         scope,
         type: 'semantic',
         subject: 'prefer npm',
-        statement: 'Use npm for this repo.',
+        statement: 'Use npm for this project.',
         origin: 'explicit_user_statement',
         details: null,
       },
@@ -1462,8 +1542,7 @@ describe('MemoryService', () => {
 
     expect(dryRun.olderThanDays).toBeNull()
     expect(dryRun.cutoffByScope.user).toBe('2026-01-05T00:00:00.000Z')
-    expect(dryRun.cutoffByScope.org).toBe('2026-01-05T00:00:00.000Z')
-    expect(dryRun.cutoffByScope.repo).toBe('2025-04-05T00:00:00.000Z')
+    expect(dryRun.cutoffByScope.project).toBe('2025-04-05T00:00:00.000Z')
     expect(dryRun.total).toBe(3)
     expect(contradicted.replacementMemory.type).toBe('semantic')
     expect(contradicted.contradictedMemory.type).toBe('preference')
@@ -1528,7 +1607,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1565,7 +1644,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1580,7 +1659,7 @@ describe('MemoryService', () => {
         scope,
         type: 'preference',
         subject: 'prefer npm',
-        statement: 'Use npm for this repo.',
+        statement: 'Use npm for this project.',
         origin: 'explicit_user_statement',
         details: null,
       },
@@ -1769,7 +1848,7 @@ describe('MemoryService', () => {
         scope,
         type: 'preference',
         subject: 'prefer pnpm',
-        statement: 'Use pnpm for this repo.',
+        statement: 'Use pnpm for this project.',
         origin: 'explicit_user_statement',
         source: { channel: 'mcp', agent: 'codex' } as never,
       }),
@@ -1800,7 +1879,7 @@ describe('MemoryService', () => {
       scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1822,7 +1901,7 @@ describe('MemoryService', () => {
           scope,
           type: 'preference',
           subject: 'prefer npm',
-          statement: 'Use npm for this repo.',
+          statement: 'Use npm for this project.',
           origin: 'explicit_user_statement',
           details: null,
         },
@@ -1882,12 +1961,12 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('does not archive repo memories at the user threshold when using scope-aware defaults', () => {
+  it('does not archive project memories at the user threshold when using scope-aware defaults', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -1913,12 +1992,12 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('archives repo memories when both reinforcement and retrieval exceed the repo threshold', () => {
+  it('archives project memories when both reinforcement and retrieval exceed the project threshold', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2025-01-01T00:00:00.000Z'))
 
     const { db, service } = createService()
-    const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
       type: 'procedural',
@@ -1955,7 +2034,7 @@ describe('MemoryService', () => {
 
     const { db, service } = createService()
     const userScope: ScopeRef = { type: 'user', id: 'default-user' }
-    const repoScope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const repoScope = createEnsuredProjectScope(service)
 
     const userMemory = service.applyObservation({
       scope: userScope,
@@ -1969,7 +2048,7 @@ describe('MemoryService', () => {
       scope: repoScope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -1978,7 +2057,7 @@ describe('MemoryService', () => {
       throw new Error('Expected user-scope memory creation.')
     }
     if (repoMemory.decision !== 'create' || !('memory' in repoMemory)) {
-      throw new Error('Expected repo-scope memory creation.')
+      throw new Error('Expected project-scope memory creation.')
     }
 
     vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
@@ -2002,7 +2081,7 @@ describe('MemoryService', () => {
 
     const { db, service } = createService()
     const userScope: ScopeRef = { type: 'user', id: 'default-user' }
-    const repoScope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+    const repoScope = createEnsuredProjectScope(service)
 
     const userMemory = service.applyObservation({
       scope: userScope,
@@ -2016,7 +2095,7 @@ describe('MemoryService', () => {
       scope: repoScope,
       type: 'preference',
       subject: 'prefer npm',
-      statement: 'Use npm for this repo.',
+      statement: 'Use npm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
@@ -2025,7 +2104,7 @@ describe('MemoryService', () => {
       throw new Error('Expected user-scope memory creation.')
     }
     if (repoMemory.decision !== 'create' || !('memory' in repoMemory)) {
-      throw new Error('Expected repo-scope memory creation.')
+      throw new Error('Expected project-scope memory creation.')
     }
 
     vi.setSystemTime(new Date('2026-04-05T00:00:00.000Z'))
@@ -2037,8 +2116,7 @@ describe('MemoryService', () => {
 
     expect(archived.olderThanDays).toBe(60)
     expect(archived.cutoffByScope.user).toBe('2026-02-04T00:00:00.000Z')
-    expect(archived.cutoffByScope.repo).toBe('2026-02-04T00:00:00.000Z')
-    expect(archived.cutoffByScope.org).toBe('2026-02-04T00:00:00.000Z')
+    expect(archived.cutoffByScope.project).toBe('2026-02-04T00:00:00.000Z')
     expect(archived.total).toBe(2)
     expect(archived.items.map(item => item.id).sort()).toEqual([userMemory.memory.id, repoMemory.memory.id].sort())
 
@@ -2085,36 +2163,42 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('canonicalizes existing repo scope paths by realpath and preserves missing repo scope ids', async () => {
+  it('canonicalizes existing project scope ids by realpath and preserves missing project scope ids', async () => {
     const { db, service } = createService()
     const dir = createTempDir()
     const repoRoot = path.join(dir, 'repo')
     const repoSymlink = path.join(dir, 'repo-link')
-    const missingRepoScopeId = path.join(dir, 'missing-repo')
+    const secondaryRepoRoot = path.join(dir, 'secondary-repo')
 
     fs.mkdirSync(repoRoot)
     fs.symlinkSync(repoRoot, repoSymlink)
+    initializeGitRepo(repoRoot)
+    initializeGitRepo(secondaryRepoRoot)
+
+    const ensuredProject = service.ensureProject({ path: repoRoot })
+    const ensuredSymlinkProject = service.ensureProject({ path: repoSymlink })
+    const secondaryProject = service.ensureProject({ path: secondaryRepoRoot })
 
     const created = service.applyObservation({
-      scope: { type: 'repo', id: `${repoSymlink}${path.sep}` },
+      scope: ensuredProject.scope,
       type: 'preference',
       subject: 'prefer pnpm',
-      statement: 'Use pnpm for this repo.',
+      statement: 'Use pnpm for this project.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
     const realpathSearch = await service.searchMemories({
-      scope: { type: 'repo', id: repoRoot },
+      scope: ensuredProject.scope,
       subject: 'prefer pnpm',
       limit: 10,
     })
     const trailingSlashSearch = await service.searchMemories({
-      scope: { type: 'repo', id: `${repoRoot}${path.sep}` },
+      scope: ensuredSymlinkProject.scope,
       subject: 'prefer pnpm',
       limit: 10,
     })
     const missingCreated = service.applyObservation({
-      scope: { type: 'repo', id: missingRepoScopeId },
+      scope: secondaryProject.scope,
       type: 'procedural',
       subject: 'run tests before commit',
       statement: 'Run tests before commit.',
@@ -2122,35 +2206,29 @@ describe('MemoryService', () => {
       source: { channel: 'cli' },
     })
     const missingSearch = await service.searchMemories({
-      scope: { type: 'repo', id: missingRepoScopeId },
+      scope: secondaryProject.scope,
       subject: 'run tests before commit',
       limit: 10,
     })
 
     if (created.decision !== 'create' || !('memory' in created)) {
-      throw new Error('Expected create decision for canonicalized repo path.')
+      throw new Error('Expected create decision for canonicalized project path.')
     }
     if (missingCreated.decision !== 'create' || !('memory' in missingCreated)) {
-      throw new Error('Expected create decision for missing repo scope id.')
+      throw new Error('Expected create decision for secondary project scope id.')
     }
 
-    expect(created.memory.scope.id).toBe(fs.realpathSync(repoRoot))
     expect(realpathSearch.total).toBe(1)
     expect(trailingSlashSearch.total).toBe(1)
-    expect(missingCreated.memory.scope.id).toBe(missingRepoScopeId)
+    expect(realpathSearch.items[0]?.scope.id).toBe(trailingSlashSearch.items[0]?.scope.id)
+    expect(created.memory.scope.type).toBe('project')
+    expect(missingCreated.memory.scope.type).toBe('project')
     expect(missingSearch.total).toBe(1)
-    expect(
-      (
-        db
-          .prepare('SELECT COUNT(*) AS total FROM projects WHERE canonical_path IN (?, ?)')
-          .get(fs.realpathSync(repoRoot), missingRepoScopeId) as { total: number }
-      ).total,
-    ).toBe(2)
 
     db.close()
   })
 
-  it('keeps user and org memories projectless in storage', () => {
+  it('keeps user and project memories projectless in storage', () => {
     const { db, service } = createService()
 
     const userCreated = service.applyObservation({
@@ -2161,11 +2239,12 @@ describe('MemoryService', () => {
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
-    const orgCreated = service.applyObservation({
-      scope: { type: 'org', id: 'kong' },
+    const projectScope = createEnsuredProjectScope(service)
+    const projectCreated = service.applyObservation({
+      scope: projectScope,
       type: 'semantic',
       subject: 'release workflow',
-      statement: 'The org has a shared release workflow.',
+      statement: 'The project has a shared release workflow.',
       origin: 'tool_observation',
       source: { channel: 'cli' },
     })
@@ -2173,22 +2252,26 @@ describe('MemoryService', () => {
     if (userCreated.decision !== 'create' || !('memory' in userCreated)) {
       throw new Error('Expected create decision for user memory.')
     }
-    if (orgCreated.decision !== 'create' || !('memory' in orgCreated)) {
-      throw new Error('Expected create decision for org memory.')
+    if (projectCreated.decision !== 'create' || !('memory' in projectCreated)) {
+      throw new Error('Expected create decision for project memory.')
     }
 
     const rows = db
       .prepare('SELECT scope_type, scope_id, project_id FROM memories WHERE id IN (?, ?) ORDER BY scope_type ASC')
-      .all(userCreated.memory.id, orgCreated.memory.id) as Array<{
+      .all(userCreated.memory.id, projectCreated.memory.id) as Array<{
       scope_type: string
       scope_id: string
       project_id: string | null
     }>
 
     expect(rows).toEqual([
-      { scope_type: 'org', scope_id: 'kong', project_id: null },
+      expect.objectContaining({
+        scope_type: 'project',
+        project_id: expect.any(String),
+      }),
       { scope_type: 'user', scope_id: 'pref-scope', project_id: null },
     ])
+    expect(rows[0]?.scope_id).toBe(rows[0]?.project_id)
 
     db.close()
   })
@@ -2199,7 +2282,7 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
 
       const created = service.applyObservation({
         scope,
@@ -2237,7 +2320,7 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
 
       const created = service.applyObservation({
         scope,
@@ -2272,7 +2355,7 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
 
       const created = service.applyObservation({
         scope,
@@ -2300,7 +2383,7 @@ describe('MemoryService', () => {
 
     it('excludes memories that have never been retrieved', () => {
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
 
       const created = service.applyObservation({
         scope,
@@ -2327,7 +2410,7 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
 
       const created = service.applyObservation({
         scope,
@@ -2359,7 +2442,7 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
 
       const created = service.applyObservation({
         scope,
@@ -2401,7 +2484,7 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scope: ScopeRef = { type: 'repo', id: '/tmp/example-repo' }
+      const scope = createEnsuredProjectScope(service)
       const oldDate = '2025-01-01T00:00:00.000Z'
 
       for (let i = 0; i < 5; i += 1) {
@@ -2434,11 +2517,10 @@ describe('MemoryService', () => {
       vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
       const { db, service } = createService()
-      const scopeA: ScopeRef = { type: 'repo', id: '/tmp/repo-a' }
-      const scopeB: ScopeRef = { type: 'repo', id: '/tmp/repo-b' }
+      const scopeA = createEnsuredProjectScope(service)
+      const scopeB = createEnsuredProjectScope(service)
       const oldDate = '2025-01-01T00:00:00.000Z'
-
-      for (const scope of [scopeA, scopeB]) {
+      for (const scope of [scopeA, scopeB] as const) {
         const created = service.applyObservation({
           scope,
           type: 'preference',
@@ -2457,7 +2539,7 @@ describe('MemoryService', () => {
       const result = service.runMaintenance({ scope: scopeA })
 
       expect(result.flushed.length).toBe(1)
-      expect(result.flushed[0]?.scope.id).toBe('/tmp/repo-a')
+      expect(result.flushed[0]?.scope.id).toBe(scopeA.id)
 
       db.close()
     })

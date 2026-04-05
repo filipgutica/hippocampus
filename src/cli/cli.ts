@@ -1,11 +1,11 @@
 import yargs from 'yargs'
 import { buildApp, type RuntimeApp } from '../app/build-app.js'
-import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
+import type { ScopeRef } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../memory/dto/apply-observation.dto.js'
 import type { SearchMatchMode } from '../memory/dto/search-memories.dto.js'
 import { MEMORY_ORIGINS, MEMORY_TYPES } from '../memory/memory.types.js'
 import type { MemoryOrigin, MemoryType } from '../memory/memory.types.js'
-import { resolveRepoScopeId } from '../repos/repo-scope.js'
+import { resolveProjectRepoRoot } from '../projects/project-identity.js'
 import { runApplyCommand } from './commands/apply.command.js'
 import { runGetPolicyCommand } from './commands/get-policy.command.js'
 import { runInitCommand } from './commands/init.command.js'
@@ -16,6 +16,7 @@ import { runMemoriesDeleteCommand } from './commands/memories-delete.command.js'
 import { runMemoriesHistoryCommand } from './commands/memories-history.command.js'
 import { runMemoriesInspectCommand } from './commands/memories-inspect.command.js'
 import { runMemoriesListCommand } from './commands/memories-list.command.js'
+import { runProjectEnsureCommand } from './commands/project-ensure.command.js'
 import { runSearchCommand } from './commands/search.command.js'
 import { runSetupClaudeCommand, runSetupCodexCommand, runSetupShellCommand } from './commands/setup.command.js'
 import {
@@ -35,7 +36,7 @@ type JsonOption = {
 }
 
 type ScopeArgs = {
-  scopeType?: ScopeType
+  scopeType?: 'user' | 'project'
   scopeId?: string
 }
 
@@ -79,11 +80,15 @@ const buildRuntimeApp = async (): Promise<RuntimeApp> => {
 }
 
 const resolveScope = ({ scopeType, scopeId }: ScopeArgs): ScopeRef => {
-  const type = scopeType ?? 'repo'
-  const id = type === 'repo' ? scopeId ?? resolveRepoScopeId(process.cwd()) : scopeId
+  const type = scopeType ?? 'project'
+  const id = type === 'project' ? scopeId ?? resolveProjectRepoRoot(process.cwd()) ?? undefined : scopeId
 
   if (!id) {
-    throw new Error(`Missing --scope-id for scope type ${type}.`)
+    throw new Error(
+      type === 'project'
+        ? 'Missing --scope-id for scope type project. Run `hippo project ensure --json` first to resolve the current project scope id.'
+        : `Missing --scope-id for scope type ${type}.`,
+    )
   }
 
   return {
@@ -246,7 +251,7 @@ const createParser = (argv: string[], io: CliIO) => {
         parser
           .option('scope-type', {
             type: 'string',
-            choices: ['user', 'repo', 'org'] as const,
+            choices: ['user', 'project'] as const,
           })
           .option('scope-id', {
             type: 'string',
@@ -290,7 +295,7 @@ const createParser = (argv: string[], io: CliIO) => {
         parser
           .option('scope-type', {
             type: 'string',
-            choices: ['user', 'repo', 'org'] as const,
+            choices: ['user', 'project'] as const,
           })
           .option('scope-id', {
             type: 'string',
@@ -342,6 +347,38 @@ const createParser = (argv: string[], io: CliIO) => {
         }),
       handler: async args => {
         await withRuntimeApp(app => runGetPolicyCommand(app, io, args.json ?? false))
+      },
+    })
+    .command({
+      command: 'project ensure',
+      describe: 'Ensure the current project identity is available for bootstrap and session-start use.',
+      builder: parser =>
+        parser
+          .option('scope-id', {
+            type: 'string',
+          })
+          .option('json', {
+            type: 'boolean',
+            default: false,
+          }),
+      handler: async args => {
+        const app = await buildApp({ mode: 'runtime', allowLazyInit: true })
+        if (app.mode !== 'runtime') {
+          throw new Error('Expected runtime app container.')
+        }
+
+        try {
+          result = await runProjectEnsureCommand(
+            app,
+            io,
+            {
+              scopeId: typeof args.scopeId === 'string' ? args.scopeId : undefined,
+            },
+            Boolean(args.json),
+          )
+        } finally {
+          app.close()
+        }
       },
     })
     .command({
@@ -520,7 +557,7 @@ const createParser = (argv: string[], io: CliIO) => {
               commandParser
                 .option('scope-type', {
                   type: 'string',
-                  choices: ['user', 'repo', 'org'] as const,
+                  choices: ['user', 'project'] as const,
                 })
                 .option('scope-id', {
                   type: 'string',
@@ -542,7 +579,7 @@ const createParser = (argv: string[], io: CliIO) => {
                   app,
                   {
                     scope: resolveScope({
-                      scopeType: args.scopeType as ScopeType | undefined,
+                      scopeType: args.scopeType as 'user' | 'project' | undefined,
                       scopeId: typeof args.scopeId === 'string' ? args.scopeId : undefined,
                     }),
                     type: typeof args.type === 'string' ? (args.type as MemoryType) : null,
@@ -591,7 +628,7 @@ const createParser = (argv: string[], io: CliIO) => {
               commandParser
                 .option('scope-type', {
                   type: 'string',
-                  choices: ['user', 'repo', 'org'] as const,
+                  choices: ['user', 'project'] as const,
                 })
                 .option('scope-id', {
                   type: 'string',
@@ -608,7 +645,7 @@ const createParser = (argv: string[], io: CliIO) => {
                   default: false,
                 }),
             handler: async args => {
-              const scopeType = args.scopeType as ScopeType | undefined
+              const scopeType = args.scopeType as 'user' | 'project' | undefined
               const scopeId = typeof args.scopeId === 'string' ? args.scopeId : undefined
 
               if ((scopeType != null) !== (scopeId != null)) {

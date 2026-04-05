@@ -1,4 +1,4 @@
-import type { MemoryEntity } from '../entities/memory.entity.js'
+import type { Memory } from '../types/memory.js'
 import type { ObservationSource } from './apply-observation.dto.js'
 
 export type LatestMemoryEventSummaryDto = {
@@ -7,6 +7,6 @@ export type LatestMemoryEventSummaryDto = {
   source: ObservationSource | null
 }
 
-export type MemoryDto = MemoryEntity & {
+export type MemoryDto = Memory & {
   latestEventSummary: LatestMemoryEventSummaryDto | null
 }

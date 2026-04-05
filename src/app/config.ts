@@ -1,15 +1,20 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
 export type AppConfig = {
   schemaVersion: number
   dbFile: string
+  currentUserId: string
   createdAt: string
 }
 
+export const APP_CONFIG_SCHEMA_VERSION = 2
+
 export const defaultConfig = ({ dbFile }: { dbFile: string }): AppConfig => ({
-  schemaVersion: 1,
+  schemaVersion: APP_CONFIG_SCHEMA_VERSION,
   dbFile,
+  currentUserId: randomUUID(),
   createdAt: new Date().toISOString(),
 })
 

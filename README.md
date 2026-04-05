@@ -28,6 +28,12 @@ Cold-cache semantic retrieval may need network access once. If semantic retrieva
 
 Hippocampus is still pre-stable and local-only during development. The local SQLite schema may change, and local state may need to be reset between development iterations until a release compatibility policy is locked.
 
+Current ownership model note:
+
+- external CLI/MCP scope is still `user`, `repo`, or `org`
+- Hippocampus now also tracks a separate local owner id in `config.json` as `currentUserId`
+- older pre-redesign local databases are not migrated in place; reset local state and run `hippo init` again
+
 ## Install and Run
 
 Canonical published MCP server command:
@@ -215,6 +221,8 @@ HIPPOCAMPUS_HOME=/tmp/hippo-dev node dist/index.js apply \
 ```
 
 For `repo` scope, prefer the canonical absolute path to the repo root with symlinks resolved. The CLI still infers the repo root when `--scope-id` is omitted, but MCP callers should pass the root path explicitly.
+
+For `user` scope, continue using the caller-chosen durable user namespace for the memory itself. That external `scope-id` is distinct from Hippocampus's internal `currentUserId`, which only identifies the local owner row used by the runtime.
 
 Search active memories:
 

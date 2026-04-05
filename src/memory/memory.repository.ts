@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import type { MemoryEntity } from './entities/memory.entity.js'
+import { type ResolvedMemoryOwnership, MemoryOwnershipRepository } from './memory-ownership.repository.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from './memory.types.js'
 
 type MemoryRow = {
@@ -52,22 +53,58 @@ const toRecord = (row: MemoryRow): MemoryEntity => ({
 
 export class MemoryRepository {
   private readonly db: InstanceType<typeof Database>
+  private readonly ownershipRepository: MemoryOwnershipRepository
 
-  constructor(db: InstanceType<typeof Database>) {
-    this.db = db
+  constructor(input: {
+    db: InstanceType<typeof Database>
+    ownershipRepository: MemoryOwnershipRepository
+  }) {
+    this.db = input.db
+    this.ownershipRepository = input.ownershipRepository
+  }
+
+  private buildScopeClauses(input: {
+    ownership: ResolvedMemoryOwnership
+    scopeAlias?: string
+  }): {
+    clauses: string[]
+    params: string[]
+  } {
+    const prefix = input.scopeAlias ? `${input.scopeAlias}.` : ''
+
+    if (input.ownership.scope.type === 'repo') {
+      if (!input.ownership.projectId) {
+        return {
+          clauses: ['1 = 0'],
+          params: [],
+        }
+      }
+
+      return {
+        clauses: [`${prefix}user_id = ?`, `${prefix}project_id = ?`],
+        params: [input.ownership.userId, input.ownership.projectId],
+      }
+    }
+
+    return {
+      clauses: [`${prefix}user_id = ?`, `${prefix}scope_type = ?`, `${prefix}scope_id = ?`, `${prefix}project_id IS NULL`],
+      params: [input.ownership.userId, input.ownership.scope.type, input.ownership.scope.id],
+    }
   }
 
   findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): MemoryEntity | null {
+    const ownership = this.ownershipRepository.resolveReadScope(scope)
+    const scopeFilter = this.buildScopeClauses({ ownership })
     const row = this.db
       .prepare(
         `
           SELECT *
           FROM memories
-          WHERE scope_type = ? AND scope_id = ? AND memory_type = ? AND subject_key = ? AND status IN ('candidate', 'active')
+          WHERE ${scopeFilter.clauses.join(' AND ')} AND memory_type = ? AND subject_key = ? AND status IN ('candidate', 'active')
           LIMIT 1
         `,
       )
-      .get(scope.type, scope.id, type, subjectKey) as MemoryRow | undefined
+      .get(...scopeFilter.params, type, subjectKey) as MemoryRow | undefined
 
     return row ? toRecord(row) : null
   }
@@ -90,6 +127,7 @@ export class MemoryRepository {
     supersededBy?: string | null
     now: string
   }): MemoryEntity {
+    const ownership = this.ownershipRepository.resolveWriteScope(input.scope, input.now)
     const id = input.id ?? randomUUID()
     const reinforcementCount = input.reinforcementCount ?? 1
     const retrievalCount = input.retrievalCount ?? 0
@@ -100,16 +138,18 @@ export class MemoryRepository {
       .prepare(
         `
           INSERT INTO memories (
-            id, scope_type, scope_id, memory_type, subject, subject_key, statement, details,
+            id, user_id, project_id, scope_type, scope_id, memory_type, subject, subject_key, statement, details,
             origin, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at,
             retrieval_count, last_retrieved_at, strength, status, superseded_by, deleted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
         id,
-        input.scope.type,
-        input.scope.id,
+        ownership.userId,
+        ownership.projectId,
+        ownership.scope.type,
+        ownership.scope.id,
         input.type,
         input.subject,
         input.subjectKey,
@@ -132,7 +172,7 @@ export class MemoryRepository {
 
     return {
       id,
-      scope: input.scope,
+      scope: ownership.scope,
       type: input.type,
       subject: input.subject,
       subjectKey: input.subjectKey,
@@ -206,8 +246,10 @@ export class MemoryRepository {
     type?: MemoryType | null
     subject?: string | null
   }): MemoryEntity[] {
-    const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
-    const params: Array<string> = [input.scope.type, input.scope.id]
+    const ownership = this.ownershipRepository.resolveReadScope(input.scope)
+    const scopeFilter = this.buildScopeClauses({ ownership })
+    const clauses = [...scopeFilter.clauses, "status = 'active'"]
+    const params: Array<string> = [...scopeFilter.params]
 
     if (input.type) {
       clauses.push('memory_type = ?')
@@ -231,12 +273,10 @@ export class MemoryRepository {
     type?: MemoryType | null
     query: string
   }): MemoryEntity[] {
-    const clauses = [
-      'm.scope_type = ?',
-      'm.scope_id = ?',
-      "m.status = 'active'",
-    ]
-    const params: Array<string> = [input.query, input.scope.type, input.scope.id]
+    const ownership = this.ownershipRepository.resolveReadScope(input.scope)
+    const scopeFilter = this.buildScopeClauses({ ownership, scopeAlias: 'm' })
+    const clauses = [...scopeFilter.clauses, "m.status = 'active'"]
+    const params: Array<string> = [input.query, ...scopeFilter.params]
 
     if (input.type) {
       clauses.push('m.memory_type = ?')
@@ -263,8 +303,10 @@ export class MemoryRepository {
     scope: ScopeRef
     type?: MemoryType | null
   }): number {
-    const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
-    const params: Array<string> = [input.scope.type, input.scope.id]
+    const ownership = this.ownershipRepository.resolveReadScope(input.scope)
+    const scopeFilter = this.buildScopeClauses({ ownership })
+    const clauses = [...scopeFilter.clauses, "status = 'active'"]
+    const params: Array<string> = [...scopeFilter.params]
 
     if (input.type) {
       clauses.push('memory_type = ?')
@@ -289,8 +331,10 @@ export class MemoryRepository {
     type?: MemoryType | null
     limit?: number | null
   }): MemoryEntity[] {
-    const clauses = ['scope_type = ?', 'scope_id = ?', "status = 'active'"]
-    const params: Array<string | number> = [input.scope.type, input.scope.id]
+    const ownership = this.ownershipRepository.resolveReadScope(input.scope)
+    const scopeFilter = this.buildScopeClauses({ ownership })
+    const clauses = [...scopeFilter.clauses, "status = 'active'"]
+    const params: Array<string | number> = [...scopeFilter.params]
 
     if (input.type) {
       clauses.push('memory_type = ?')
@@ -366,8 +410,10 @@ export class MemoryRepository {
     const params: Array<string | number> = [input.floor]
 
     if (input.scope) {
-      clauses.push('scope_type = ?', 'scope_id = ?')
-      params.push(input.scope.type, input.scope.id)
+      const ownership = this.ownershipRepository.resolveReadScope(input.scope)
+      const scopeFilter = this.buildScopeClauses({ ownership })
+      clauses.push(...scopeFilter.clauses)
+      params.push(...scopeFilter.params)
     }
 
     params.push(input.limit)

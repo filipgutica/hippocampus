@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import { defaultConfig, readConfig, writeConfig, type AppConfig } from './config.js'
 import type { AppPaths } from './paths.js'
 import { initializeDatabase } from '../common/db/db.js'
+import { MemoryOwnershipRepository } from '../memory/memory-ownership.repository.js'
+import { assertRuntimeCompatibility } from './runtime-compatibility.js'
 
 export type InitResult = {
   initialized: boolean
@@ -25,7 +27,13 @@ export class InitService {
       writeConfig(this.paths.configFile, config)
     }
 
-    initializeDatabase(config.dbFile).close()
+    const db = initializeDatabase(config.dbFile)
+    assertRuntimeCompatibility({ config, db })
+    new MemoryOwnershipRepository({
+      db,
+      currentUserId: config.currentUserId,
+    }).ensureCurrentUser(new Date().toISOString())
+    db.close()
 
     return {
       initialized: true,
@@ -47,7 +55,13 @@ export class InitService {
       return this.initialize()
     }
 
-    initializeDatabase(config.dbFile).close()
+    const db = initializeDatabase(config.dbFile)
+    assertRuntimeCompatibility({ config, db })
+    new MemoryOwnershipRepository({
+      db,
+      currentUserId: config.currentUserId,
+    }).ensureCurrentUser(new Date().toISOString())
+    db.close()
 
     return {
       initialized: false,

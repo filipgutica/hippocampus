@@ -2,10 +2,12 @@ import { resolveAppPaths, type AppPaths } from './paths.js'
 import { InitService, type InitResult } from './init.service.js'
 import { defaultConfig, readConfig } from './config.js'
 import { initializeDatabase } from '../common/db/db.js'
+import { assertRuntimeCompatibility } from './runtime-compatibility.js'
 import { MemoryEmbeddingRepository } from '../memory/memory-embedding.repository.js'
 import { MemoryRepository } from '../memory/memory.repository.js'
 import { MemoryEventRepository } from '../memory/memory-event.repository.js'
 import { MemoryRuntimeStateRepository } from '../memory/memory-runtime-state.repository.js'
+import { MemoryOwnershipRepository } from '../memory/memory-ownership.repository.js'
 import { LocalEmbeddingProvider } from '../memory/local-embedding-provider.js'
 import { MEMORY_POLICY_VERSION } from '../memory/policies/memory.policy.js'
 import { MemoryService } from '../memory/memory.service.js'
@@ -61,8 +63,16 @@ export const buildApp = async (options: BuildAppOptions): Promise<AppContainer> 
           readConfig(paths.configFile) ?? defaultConfig({ dbFile: paths.dbFile }),
       }
   const db = initializeDatabase(initResult.config.dbFile)
+  assertRuntimeCompatibility({ config: initResult.config, db })
+  const memoryOwnershipRepository = new MemoryOwnershipRepository({
+    db,
+    currentUserId: initResult.config.currentUserId,
+  })
   const memoryEmbeddingRepository = new MemoryEmbeddingRepository(db)
-  const memoryRepository = new MemoryRepository(db)
+  const memoryRepository = new MemoryRepository({
+    db,
+    ownershipRepository: memoryOwnershipRepository,
+  })
   const memoryEventRepository = new MemoryEventRepository(db)
   const memoryRuntimeStateRepository = new MemoryRuntimeStateRepository(db)
   const memoryService = new MemoryService({

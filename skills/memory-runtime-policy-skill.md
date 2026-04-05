@@ -13,6 +13,7 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `rep
 - At the start of every new thread, call `memory-get-policy` first.
 - Then call `memory-list` for repo scope when the current work is in a repository.
 - Then call `memory-list` for user scope to prime durable personal preferences and habits.
+- Use the caller's intended user scope id; do not assume the local OS username is the same as Hippocampus's configured local owner identity.
 - If the topic is clear and durable, call `memory-search` before making assumptions.
 - Skip the bootstrap only when the thread is clearly ephemeral or Hippocampus is unavailable.
 

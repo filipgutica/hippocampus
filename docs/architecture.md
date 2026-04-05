@@ -121,13 +121,22 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 
 `src/memory/dto/` contains transport shapes. `MemoryDto` is the outward memory contract returned by search/list/get and carries `latestEventSummary`. `MemoryEventDto` is the parsed event-history contract returned by `memory-get-history`.
 
+Phase-1 ownership note:
+
+- external CLI/MCP scope remains `user`, `repo`, or `org`
+- local Hippocampus owner identity is tracked separately as `config.currentUserId`
+- `scope.id` for external user scope is not the same thing as the local configured owner id
+- pre-phase-1 local databases are treated as incompatible dev state and must be reset rather than migrated in place
+
 Key columns on a memory record (`memories` table):
 
 | Field | Type | Description |
 |---|---|---|
 | `id` | TEXT (UUID) | Primary key |
-| `scope_type` | TEXT | `user`, `repo`, or `org` |
-| `scope_id` | TEXT | Absolute path (repo), username (user), org identifier |
+| `user_id` | TEXT | FK to the local Hippocampus owner row |
+| `project_id` | TEXT | Nullable FK to `projects`; populated for repo scope |
+| `scope_type` | TEXT | Compatibility scope snapshot: `user`, `repo`, or `org` |
+| `scope_id` | TEXT | Compatibility scope snapshot: canonical path (repo) or caller-provided user/org id |
 | `memory_type` | TEXT | See memory types below |
 | `subject` | TEXT | Human-readable subject label |
 | `subject_key` | TEXT | Normalised subject used for uniqueness |
@@ -286,7 +295,7 @@ The default location is `~/.hippocampus`. Override with `HIPPOCAMPUS_HOME`.
 1. Resolves the `hippo` or `hippocampus` binary from `PATH` via a login shell.
 2. Calls `hippo get-policy` to fetch the current runtime policy.
 3. Detects the git repo root (`git rev-parse --show-toplevel`) and calls `hippo memories list --scope-type repo --scope-id <root> --limit 5`.
-4. Reads the OS username and calls `hippo memories list --scope-type user --scope-id <user> --limit 5`.
+4. Reads Hippocampus `config.json` for `currentUserId` and calls `hippo memories list --scope-type user --scope-id <currentUserId> --limit 5` for local-owner bootstrap context.
 5. Concatenates the results into `hookSpecificOutput.additionalContext` and writes it to stdout as JSON.
 
 The agent runtime (Claude Code, Codex) injects `additionalContext` into the session context before the agent processes its first message.

@@ -8,6 +8,7 @@ import { initializeDatabase } from '../src/common/db/db.js'
 import type { ScopeRef } from '../src/common/types/scope-ref.js'
 import { MemoryEmbeddingRepository } from '../src/memory/memory-embedding.repository.js'
 import { MemoryEventRepository } from '../src/memory/memory-event.repository.js'
+import { MemoryOwnershipRepository } from '../src/memory/memory-ownership.repository.js'
 import type { EmbeddingProvider } from '../src/memory/local-embedding-provider.js'
 import { MEMORY_POLICY_VERSION } from '../src/memory/policies/memory.policy.js'
 import { MemoryRepository } from '../src/memory/memory.repository.js'
@@ -45,7 +46,15 @@ const createService = (options?: {
   const dbFile = path.join(dir, 'hippocampus.db')
   const db = initializeDatabase(dbFile)
   const memoryRuntimeStateRepository = new MemoryRuntimeStateRepository(db)
-  const memoryRepository = new MemoryRepository(db)
+  const ownershipRepository = new MemoryOwnershipRepository({
+    db,
+    currentUserId: randomUUID(),
+  })
+  ownershipRepository.ensureCurrentUser(new Date().toISOString())
+  const memoryRepository = new MemoryRepository({
+    db,
+    ownershipRepository,
+  })
   const embeddingProvider =
     options?.embeddingProvider ??
     {
@@ -2130,6 +2139,56 @@ describe('MemoryService', () => {
     expect(trailingSlashSearch.total).toBe(1)
     expect(missingCreated.memory.scope.id).toBe(missingRepoScopeId)
     expect(missingSearch.total).toBe(1)
+    expect(
+      (
+        db
+          .prepare('SELECT COUNT(*) AS total FROM projects WHERE canonical_path IN (?, ?)')
+          .get(fs.realpathSync(repoRoot), missingRepoScopeId) as { total: number }
+      ).total,
+    ).toBe(2)
+
+    db.close()
+  })
+
+  it('keeps user and org memories projectless in storage', () => {
+    const { db, service } = createService()
+
+    const userCreated = service.applyObservation({
+      scope: { type: 'user', id: 'pref-scope' },
+      type: 'preference',
+      subject: 'answer tersely',
+      statement: 'Prefer concise answers.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+    const orgCreated = service.applyObservation({
+      scope: { type: 'org', id: 'kong' },
+      type: 'semantic',
+      subject: 'release workflow',
+      statement: 'The org has a shared release workflow.',
+      origin: 'tool_observation',
+      source: { channel: 'cli' },
+    })
+
+    if (userCreated.decision !== 'create' || !('memory' in userCreated)) {
+      throw new Error('Expected create decision for user memory.')
+    }
+    if (orgCreated.decision !== 'create' || !('memory' in orgCreated)) {
+      throw new Error('Expected create decision for org memory.')
+    }
+
+    const rows = db
+      .prepare('SELECT scope_type, scope_id, project_id FROM memories WHERE id IN (?, ?) ORDER BY scope_type ASC')
+      .all(userCreated.memory.id, orgCreated.memory.id) as Array<{
+      scope_type: string
+      scope_id: string
+      project_id: string | null
+    }>
+
+    expect(rows).toEqual([
+      { scope_type: 'org', scope_id: 'kong', project_id: null },
+      { scope_type: 'user', scope_id: 'pref-scope', project_id: null },
+    ])
 
     db.close()
   })

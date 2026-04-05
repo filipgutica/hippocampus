@@ -5,7 +5,7 @@ Use this procedure to prime Hippocampus memory at the start of a new thread and 
 ## Startup Sequence
 - Call `memory-get-policy` first.
 - If the current work is in a repository, call `memory-list` for repo scope.
-- Call `memory-list` for user scope using the current user id.
+- Call `memory-list` for user scope using the user scope id that actually matches the durable preference namespace you want.
 - If the task has a clear durable subject, call `memory-search` before making assumptions.
 
 ## Writing

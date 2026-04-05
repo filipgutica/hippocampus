@@ -29,8 +29,23 @@ export const migrations: Migration[] = [
         applied_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        canonical_path TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        project_id TEXT REFERENCES projects(id),
         scope_type TEXT NOT NULL,
         scope_id TEXT NOT NULL,
         memory_type TEXT NOT NULL,
@@ -50,7 +65,11 @@ export const migrations: Migration[] = [
         strength REAL NOT NULL DEFAULT 1.0,
         status TEXT NOT NULL DEFAULT 'active',
         superseded_by TEXT REFERENCES memories(id),
-        deleted_at TEXT
+        deleted_at TEXT,
+        CHECK (
+          (scope_type = 'repo' AND project_id IS NOT NULL)
+          OR (scope_type IN ('user', 'org') AND project_id IS NULL)
+        )
       );
 
       CREATE TABLE IF NOT EXISTS memory_events (
@@ -85,12 +104,21 @@ export const migrations: Migration[] = [
         model_fingerprint TEXT NOT NULL DEFAULT ''
       );
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_scope_memory_type_subject
-        ON memories(scope_type, scope_id, memory_type, subject_key)
-        WHERE status IN ('candidate', 'active');
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_repo_scope_memory_type_subject
+        ON memories(user_id, project_id, memory_type, subject_key)
+        WHERE status IN ('candidate', 'active') AND project_id IS NOT NULL;
 
-      CREATE INDEX IF NOT EXISTS idx_memories_status_scope_memory_type
-        ON memories(status, scope_type, scope_id, memory_type);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_nonproject_scope_memory_type_subject
+        ON memories(user_id, scope_type, scope_id, memory_type, subject_key)
+        WHERE status IN ('candidate', 'active') AND project_id IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_memories_status_repo_memory_type
+        ON memories(status, user_id, project_id, memory_type)
+        WHERE project_id IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_memories_status_nonproject_scope_memory_type
+        ON memories(status, user_id, scope_type, scope_id, memory_type)
+        WHERE project_id IS NULL;
 
       CREATE INDEX IF NOT EXISTS idx_memories_superseded_by
         ON memories(superseded_by);

@@ -6,6 +6,7 @@ Use this supporting guidance after reading the canonical runtime policy at `hipp
 - Use `repo` scope for conventions, workflows, and stable facts tied to one repository.
 - Use `user` scope for durable personal preferences or habits that should carry across repositories.
 - Use `org` scope only when the fact clearly belongs to a shared organizational context.
+- Treat Hippocampus's local configured owner identity as internal runtime state, not as the meaning of external user-scope ids.
 - Do not ask Hippocampus to infer scope when the right scope is already clear from context.
 - For `repo` scope, use the canonical absolute path to the repo root with symlinks resolved.
 

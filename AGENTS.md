@@ -49,4 +49,5 @@ Hippocampus is a local-first memory runtime for coding agents. The current syste
 - Update the README whenever behavior, commands, installation steps, or local development flow changes.
 - Keep the README `Next` section current so it is easy to see what the next active area of work is.
 - Use the `.notes/` directory for short agent-facing notes about memory, future work, and architecture brainstorming that should be easy to revisit later.
+- Track active `.notes/` work with the `todo/`, `in-progress/`, and `complete/` directories. Use the global `project-notes-tracker` skill when creating, moving, or updating note tickets so status, frontmatter, planning summaries, work logs, and completion summaries stay consistent.
 - Keep this file concise. Do not duplicate details that are obvious from the code layout.

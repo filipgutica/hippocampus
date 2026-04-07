@@ -119,6 +119,8 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 
 `src/common/db/schema/` is the Drizzle schema source of truth. Each table lives in its own file and exports both the table definition and inferred `*Row` / `New*Row` types for persistence-layer use.
 
+Runtime migrations remain handwritten in `src/common/db/migrations.ts` and are the canonical migration path. This keeps the FTS5 virtual table and trigger setup explicit while Drizzle owns table schemas, inferred row types, and repository query execution. FTS5 reads use Drizzle raw SQL because `memories_fts` is a virtual table rather than a normal Drizzle schema table.
+
 `src/memory/types/` contains service-facing mapped shapes. `Memory` is the normalized runtime shape returned by `MemoryRepository`, while `MemoryEvent` preserves the runtime event shape with `scope: ScopeRef` and raw stored JSON fields.
 
 `src/memory/dto/` contains transport shapes. `MemoryDto` is the outward memory contract returned by search/list/get and carries `latestEventSummary`. `MemoryEventDto` is the parsed event-history contract returned by `memory-get-history`.

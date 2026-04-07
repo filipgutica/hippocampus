@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import type { MemoryRow } from '../common/db/schema/index.js'
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm'
+import { createDrizzleDb, type DrizzleDb } from '../common/db/drizzle.js'
+import { memoriesTable, type MemoryRow } from '../common/db/schema/index.js'
 import type { ScopeRef, ScopeType } from '../common/types/scope-ref.js'
 import { type ResolvedMemoryOwnership, MemoryOwnershipRepository } from './memory-ownership.repository.js'
 import type { MemoryOrigin, MemoryStatus, MemoryType } from './memory.types.js'
@@ -33,11 +35,7 @@ const getMemorySelectColumns = (alias?: string): string => {
   `
 }
 
-type SelectedMemoryRow = MemoryRow & {
-  lastObservedAt: string
-}
-
-const toMemory = (row: SelectedMemoryRow): Memory => ({
+const toMemory = (row: MemoryRow): Memory => ({
   id: row.id,
   scope: { type: row.scopeType as ScopeRef['type'], id: row.scopeId },
   type: row.memoryType as MemoryType,
@@ -60,59 +58,54 @@ const toMemory = (row: SelectedMemoryRow): Memory => ({
 })
 
 export class MemoryRepository {
-  private readonly db: InstanceType<typeof Database>
+  private readonly drizzleDb: DrizzleDb
   private readonly ownershipRepository: MemoryOwnershipRepository
 
   constructor(input: {
     db: InstanceType<typeof Database>
     ownershipRepository: MemoryOwnershipRepository
   }) {
-    this.db = input.db
+    this.drizzleDb = createDrizzleDb(input.db)
     this.ownershipRepository = input.ownershipRepository
   }
 
-  private buildScopeClauses(input: {
+  private buildScopePredicate(input: {
     ownership: ResolvedMemoryOwnership
-    scopeAlias?: string
-  }): {
-    clauses: string[]
-    params: string[]
-  } {
-    const prefix = input.scopeAlias ? `${input.scopeAlias}.` : ''
-
+  }): SQL {
     if (input.ownership.scope.type === 'project') {
       if (!input.ownership.projectId) {
-        return {
-          clauses: ['1 = 0'],
-          params: [],
-        }
+        return sql`1 = 0`
       }
 
-      return {
-        clauses: [`${prefix}user_id = ?`, `${prefix}project_id = ?`],
-        params: [input.ownership.userId, input.ownership.projectId],
-      }
+      return and(
+        eq(memoriesTable.userId, input.ownership.userId),
+        eq(memoriesTable.projectId, input.ownership.projectId),
+      ) ?? sql`1 = 0`
     }
 
-    return {
-      clauses: [`${prefix}user_id = ?`, `${prefix}scope_type = ?`, `${prefix}scope_id = ?`, `${prefix}project_id IS NULL`],
-      params: [input.ownership.userId, input.ownership.scope.type, input.ownership.scope.id],
-    }
+    return and(
+      eq(memoriesTable.userId, input.ownership.userId),
+      eq(memoriesTable.scopeType, input.ownership.scope.type),
+      eq(memoriesTable.scopeId, input.ownership.scope.id),
+      isNull(memoriesTable.projectId),
+    ) ?? sql`1 = 0`
   }
 
   findSimilar(scope: ScopeRef, type: MemoryType, subjectKey: string): Memory | null {
     const ownership = this.ownershipRepository.resolveReadScope(scope)
-    const scopeFilter = this.buildScopeClauses({ ownership })
-    const row = this.db
-      .prepare(
-        `
-          SELECT ${getMemorySelectColumns()}
-          FROM memories
-          WHERE ${scopeFilter.clauses.join(' AND ')} AND memory_type = ? AND subject_key = ? AND status IN ('candidate', 'active')
-          LIMIT 1
-        `,
+    const row = this.drizzleDb
+      .select()
+      .from(memoriesTable)
+      .where(
+        and(
+          this.buildScopePredicate({ ownership }),
+          eq(memoriesTable.memoryType, type),
+          eq(memoriesTable.subjectKey, subjectKey),
+          inArray(memoriesTable.status, ['candidate', 'active']),
+        ),
       )
-      .get(...scopeFilter.params, type, subjectKey) as SelectedMemoryRow | undefined
+      .limit(1)
+      .get()
 
     return row ? toMemory(row) : null
   }
@@ -142,41 +135,34 @@ export class MemoryRepository {
     const lastRetrievedAt = input.lastRetrievedAt ?? null
     const strength = input.strength ?? 1
 
-    this.db
-      .prepare(
-        `
-          INSERT INTO memories (
-            id, user_id, project_id, scope_type, scope_id, memory_type, subject, subject_key, statement, details,
-            origin, reinforcement_count, policy_version, created_at, updated_at, last_observed_at, last_reinforced_at,
-            retrieval_count, last_retrieved_at, strength, status, superseded_by, deleted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
+    this.drizzleDb
+      .insert(memoriesTable)
+      .values({
         id,
-        ownership.userId,
-        ownership.projectId,
-        ownership.scope.type,
-        ownership.scope.id,
-        input.type,
-        input.subject,
-        input.subjectKey,
-        input.statement,
-        input.details ?? null,
-        input.origin,
+        userId: ownership.userId,
+        projectId: ownership.projectId,
+        scopeType: ownership.scope.type,
+        scopeId: ownership.scope.id,
+        memoryType: input.type,
+        subject: input.subject,
+        subjectKey: input.subjectKey,
+        statement: input.statement,
+        details: input.details ?? null,
+        origin: input.origin,
         reinforcementCount,
-        input.policyVersion,
-        input.now,
-        input.now,
-        input.now,
-        input.now,
+        policyVersion: input.policyVersion,
+        createdAt: input.now,
+        updatedAt: input.now,
+        lastObservedAt: input.now,
+        lastReinforcedAt: input.now,
         retrievalCount,
         lastRetrievedAt,
         strength,
-        input.status,
-        input.supersededBy ?? null,
-        null,
-      )
+        status: input.status,
+        supersededBy: input.supersededBy ?? null,
+        deletedAt: null,
+      })
+      .run()
 
     return {
       id,
@@ -225,26 +211,23 @@ export class MemoryRepository {
       deletedAt: null,
     }
 
-    this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET statement = ?, details = ?, origin = ?, reinforcement_count = ?, policy_version = ?, updated_at = ?, last_observed_at = ?, last_reinforced_at = ?, status = ?, superseded_by = NULL, deleted_at = NULL
-          WHERE id = ?
-        `,
-      )
-      .run(
-        next.statement,
-        next.details,
-        next.origin,
-        next.reinforcementCount,
-        next.policyVersion,
-        next.updatedAt,
-        next.lastReinforcedAt,
-        next.lastReinforcedAt,
-        next.status,
-        next.id,
-      )
+    this.drizzleDb
+      .update(memoriesTable)
+      .set({
+        statement: next.statement,
+        details: next.details,
+        origin: next.origin,
+        reinforcementCount: next.reinforcementCount,
+        policyVersion: next.policyVersion,
+        updatedAt: next.updatedAt,
+        lastObservedAt: next.lastReinforcedAt,
+        lastReinforcedAt: next.lastReinforcedAt,
+        status: next.status,
+        supersededBy: null,
+        deletedAt: null,
+      })
+      .where(eq(memoriesTable.id, next.id))
+      .run()
 
     return next
   }
@@ -255,23 +238,21 @@ export class MemoryRepository {
     subject?: string | null
   }): Memory[] {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
-    const scopeFilter = this.buildScopeClauses({ ownership })
-    const clauses = [...scopeFilter.clauses, "status = 'active'"]
-    const params: Array<string> = [...scopeFilter.params]
+    const filters: SQL[] = [this.buildScopePredicate({ ownership }), eq(memoriesTable.status, 'active')]
 
     if (input.type) {
-      clauses.push('memory_type = ?')
-      params.push(input.type)
+      filters.push(eq(memoriesTable.memoryType, input.type))
     }
 
     if (input.subject) {
-      clauses.push('subject_key = ?')
-      params.push(input.subject)
+      filters.push(eq(memoriesTable.subjectKey, input.subject))
     }
 
-    const rows = this.db
-      .prepare(`SELECT ${getMemorySelectColumns()} FROM memories WHERE ${clauses.join(' AND ')}`)
-      .all(...params) as SelectedMemoryRow[]
+    const rows = this.drizzleDb
+      .select()
+      .from(memoriesTable)
+      .where(and(...filters))
+      .all()
 
     return rows.map(toMemory)
   }
@@ -282,27 +263,34 @@ export class MemoryRepository {
     query: string
   }): Memory[] {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
-    const scopeFilter = this.buildScopeClauses({ ownership, scopeAlias: 'm' })
-    const clauses = [...scopeFilter.clauses, "m.status = 'active'"]
-    const params: Array<string> = [input.query, ...scopeFilter.params]
+    const typePredicate = input.type ? sql`AND m.memory_type = ${input.type}` : sql``
 
-    if (input.type) {
-      clauses.push('m.memory_type = ?')
-      params.push(input.type)
-    }
-
-    const rows = this.db
-      .prepare(
-        `
-          SELECT ${getMemorySelectColumns('m')}, bm25(memories_fts) AS rank
-          FROM memories_fts
-          JOIN memories m ON memories_fts.rowid = m.rowid
-          WHERE memories_fts MATCH ?
-            AND ${clauses.join(' AND ')}
-          ORDER BY rank
-        `,
-      )
-      .all(...params) as MemoryRow[]
+    // FTS5 is managed by handwritten migrations and is intentionally kept as
+    // a raw SQL read because the virtual table is not a normal Drizzle schema table.
+    const rows = this.drizzleDb.all<MemoryRow>(sql`
+      SELECT ${sql.raw(getMemorySelectColumns('m'))}, bm25(memories_fts) AS rank
+      FROM memories_fts
+      JOIN memories m ON memories_fts.rowid = m.rowid
+      WHERE memories_fts MATCH ${input.query}
+        AND m.status = 'active'
+        AND (
+          (
+            ${ownership.scope.type} = 'project'
+            AND ${ownership.projectId} IS NOT NULL
+            AND m.user_id = ${ownership.userId}
+            AND m.project_id = ${ownership.projectId}
+          )
+          OR (
+            ${ownership.scope.type} != 'project'
+            AND m.user_id = ${ownership.userId}
+            AND m.scope_type = ${ownership.scope.type}
+            AND m.scope_id = ${ownership.scope.id}
+            AND m.project_id IS NULL
+          )
+        )
+        ${typePredicate}
+      ORDER BY rank
+    `)
 
     return rows.map(toMemory)
   }
@@ -312,24 +300,17 @@ export class MemoryRepository {
     type?: MemoryType | null
   }): number {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
-    const scopeFilter = this.buildScopeClauses({ ownership })
-    const clauses = [...scopeFilter.clauses, "status = 'active'"]
-    const params: Array<string> = [...scopeFilter.params]
+    const filters: SQL[] = [this.buildScopePredicate({ ownership }), eq(memoriesTable.status, 'active')]
 
     if (input.type) {
-      clauses.push('memory_type = ?')
-      params.push(input.type)
+      filters.push(eq(memoriesTable.memoryType, input.type))
     }
 
-    const row = this.db
-      .prepare(
-        `
-          SELECT COUNT(*) AS total
-          FROM memories
-          WHERE ${clauses.join(' AND ')}
-        `,
-      )
-      .get(...params) as { total: number } | undefined
+    const row = this.drizzleDb
+      .select({ total: sql<number>`COUNT(*)` })
+      .from(memoriesTable)
+      .where(and(...filters))
+      .get()
 
     return row?.total ?? 0
   }
@@ -340,25 +321,18 @@ export class MemoryRepository {
     limit?: number | null
   }): Memory[] {
     const ownership = this.ownershipRepository.resolveReadScope(input.scope)
-    const scopeFilter = this.buildScopeClauses({ ownership })
-    const clauses = [...scopeFilter.clauses, "status = 'active'"]
-    const params: Array<string | number> = [...scopeFilter.params]
+    const filters: SQL[] = [this.buildScopePredicate({ ownership }), eq(memoriesTable.status, 'active')]
 
     if (input.type) {
-      clauses.push('memory_type = ?')
-      params.push(input.type)
+      filters.push(eq(memoriesTable.memoryType, input.type))
     }
 
-    const limitClause = input.limit != null ? ' LIMIT ?' : ''
-    if (input.limit != null) {
-      params.push(input.limit)
-    }
+    const query = this.drizzleDb
+      .select()
+      .from(memoriesTable)
+      .where(and(...filters))
 
-    const rows = this.db
-      .prepare(
-        `SELECT ${getMemorySelectColumns()} FROM memories WHERE ${clauses.join(' AND ')}${limitClause}`,
-      )
-      .all(...params) as SelectedMemoryRow[]
+    const rows = input.limit != null ? query.limit(input.limit).all() : query.all()
 
     return rows.map(toMemory)
   }
@@ -367,40 +341,27 @@ export class MemoryRepository {
     cutoffByScope: Record<ScopeType, string>
     limit?: number | null
   }): Memory[] {
-    const params: Array<string | number> = [
-      input.cutoffByScope.user,
-      input.cutoffByScope.project,
-      input.cutoffByScope.user,
-      input.cutoffByScope.project,
-    ]
-    const limitClause = input.limit != null ? ' LIMIT ?' : ''
-
-    if (input.limit != null) {
-      params.push(input.limit)
-    }
-
-    const rows = this.db
-      .prepare(
-        `
-          SELECT ${getMemorySelectColumns()}
-          FROM memories
-          WHERE status IN ('candidate', 'active')
-            AND last_reinforced_at <= CASE scope_type
-              WHEN 'user' THEN ?
-              ELSE ?
-            END
-            AND (
-              last_retrieved_at IS NULL
-              OR last_retrieved_at <= CASE scope_type
-                WHEN 'user' THEN ?
-                ELSE ?
-              END
-            )
-          ORDER BY last_reinforced_at ASC, created_at ASC
-          ${limitClause}
-        `,
+    const lastReinforcedCutoff = sql<string>`CASE ${memoriesTable.scopeType}
+      WHEN 'user' THEN ${input.cutoffByScope.user}
+      ELSE ${input.cutoffByScope.project}
+    END`
+    const lastRetrievedCutoff = sql<string>`CASE ${memoriesTable.scopeType}
+      WHEN 'user' THEN ${input.cutoffByScope.user}
+      ELSE ${input.cutoffByScope.project}
+    END`
+    const query = this.drizzleDb
+      .select()
+      .from(memoriesTable)
+      .where(
+        and(
+          inArray(memoriesTable.status, ['candidate', 'active']),
+          lte(memoriesTable.lastReinforcedAt, lastReinforcedCutoff),
+          or(isNull(memoriesTable.lastRetrievedAt), lte(memoriesTable.lastRetrievedAt, lastRetrievedCutoff)),
+        ),
       )
-      .all(...params) as SelectedMemoryRow[]
+      .orderBy(asc(memoriesTable.lastReinforcedAt), asc(memoriesTable.createdAt))
+
+    const rows = input.limit != null ? query.limit(input.limit).all() : query.all()
 
     return rows.map(toMemory)
   }
@@ -410,28 +371,24 @@ export class MemoryRepository {
     floor: number
     limit: number
   }): Memory[] {
-    const clauses = ["status = 'active'", 'last_retrieved_at IS NOT NULL', 'strength > ?']
-    const params: Array<string | number> = [input.floor]
+    const filters: SQL[] = [
+      eq(memoriesTable.status, 'active'),
+      isNotNull(memoriesTable.lastRetrievedAt),
+      gt(memoriesTable.strength, input.floor),
+    ]
 
     if (input.scope) {
       const ownership = this.ownershipRepository.resolveReadScope(input.scope)
-      const scopeFilter = this.buildScopeClauses({ ownership })
-      clauses.push(...scopeFilter.clauses)
-      params.push(...scopeFilter.params)
+      filters.push(this.buildScopePredicate({ ownership }))
     }
 
-    params.push(input.limit)
-
-    const rows = this.db
-      .prepare(
-        `
-          SELECT ${getMemorySelectColumns()} FROM memories
-          WHERE ${clauses.join(' AND ')}
-          ORDER BY last_retrieved_at ASC
-          LIMIT ?
-        `,
-      )
-      .all(...params) as SelectedMemoryRow[]
+    const rows = this.drizzleDb
+      .select()
+      .from(memoriesTable)
+      .where(and(...filters))
+      .orderBy(asc(memoriesTable.lastRetrievedAt))
+      .limit(input.limit)
+      .all()
 
     return rows.map(toMemory)
   }
@@ -441,21 +398,20 @@ export class MemoryRepository {
     strength: number
     now: string
   }): void {
-    this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET strength = ?, updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(input.strength, input.now, input.id)
+    this.drizzleDb
+      .update(memoriesTable)
+      .set({ strength: input.strength, updatedAt: input.now })
+      .where(eq(memoriesTable.id, input.id))
+      .run()
   }
 
   getById(id: string): Memory | null {
-    const row = this.db
-      .prepare(`SELECT ${getMemorySelectColumns()} FROM memories WHERE id = ? LIMIT 1`)
-      .get(id) as SelectedMemoryRow | undefined
+    const row = this.drizzleDb
+      .select()
+      .from(memoriesTable)
+      .where(eq(memoriesTable.id, id))
+      .limit(1)
+      .get()
 
     return row ? toMemory(row) : null
   }
@@ -471,15 +427,15 @@ export class MemoryRepository {
       deletedAt: input.now,
     }
 
-    this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET status = 'deleted', deleted_at = ?, updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(next.deletedAt, next.updatedAt, next.id)
+    this.drizzleDb
+      .update(memoriesTable)
+      .set({
+        status: 'deleted',
+        deletedAt: next.deletedAt,
+        updatedAt: next.updatedAt,
+      })
+      .where(eq(memoriesTable.id, next.id))
+      .run()
 
     return next
   }
@@ -488,15 +444,11 @@ export class MemoryRepository {
     id: string
     now: string
   }): Memory | null {
-    const result = this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET status = 'archived', updated_at = ?
-          WHERE id = ? AND status IN ('candidate', 'active')
-        `,
-      )
-      .run(input.now, input.id)
+    const result = this.drizzleDb
+      .update(memoriesTable)
+      .set({ status: 'archived', updatedAt: input.now })
+      .where(and(eq(memoriesTable.id, input.id), inArray(memoriesTable.status, ['candidate', 'active'])))
+      .run()
 
     if (result.changes === 0) {
       return null
@@ -524,15 +476,15 @@ export class MemoryRepository {
       strength: input.strength,
     }
 
-    this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET retrieval_count = ?, last_retrieved_at = ?, strength = ?
-          WHERE id = ?
-        `,
-      )
-      .run(next.retrievalCount, next.lastRetrievedAt, next.strength, next.id)
+    this.drizzleDb
+      .update(memoriesTable)
+      .set({
+        retrievalCount: next.retrievalCount,
+        lastRetrievedAt: next.lastRetrievedAt,
+        strength: next.strength,
+      })
+      .where(eq(memoriesTable.id, next.id))
+      .run()
 
     return next
   }
@@ -547,15 +499,11 @@ export class MemoryRepository {
       updatedAt: input.now,
     }
 
-    this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET status = 'suppressed', updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(next.updatedAt, next.id)
+    this.drizzleDb
+      .update(memoriesTable)
+      .set({ status: 'suppressed', updatedAt: next.updatedAt })
+      .where(eq(memoriesTable.id, next.id))
+      .run()
 
     return next
   }
@@ -571,15 +519,11 @@ export class MemoryRepository {
       updatedAt: input.now,
     }
 
-    this.db
-      .prepare(
-        `
-          UPDATE memories
-          SET superseded_by = ?, updated_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(next.supersededBy, next.updatedAt, next.id)
+    this.drizzleDb
+      .update(memoriesTable)
+      .set({ supersededBy: next.supersededBy, updatedAt: next.updatedAt })
+      .where(eq(memoriesTable.id, next.id))
+      .run()
 
     return next
   }

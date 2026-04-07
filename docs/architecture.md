@@ -12,15 +12,39 @@ hippocampus/
 │   ├── index.ts           # CLI entry point (#!/usr/bin/env node)
 │   ├── app/               # App container factory and initialisation
 │   ├── cli/               # CLI command handlers and setup tooling
+│   │   └── commands/      # One file per CLI command
 │   ├── mcp/               # MCP server, tools, and resources
-│   ├── memory/            # Core memory domain: service, repositories, types, DTOs, policies, search
-│   ├── common/            # Database init, migrations, shared utilities
-│   ├── guidance/          # Guidance catalog (policy + scope skill)
-│   └── projects/          # Project scope resolution helpers
+│   │   ├── tools/         # One file per MCP tool
+│   │   └── resources/     # One file per MCP resource
+│   ├── memory/            # Core memory domain
+│   │   ├── dto/           # Transport shapes (input/output contracts for CLI and MCP)
+│   │   ├── policies/      # Policy logic: apply, ranking, scope validation
+│   │   ├── types/         # Internal runtime shapes (Memory, MemoryEvent, MemoryEmbedding)
+│   │   ├── memory.service.ts
+│   │   ├── memory.repository.ts
+│   │   ├── memory-event.repository.ts
+│   │   ├── memory-embedding.repository.ts
+│   │   ├── memory-ownership.repository.ts
+│   │   ├── memory-runtime-state.repository.ts
+│   │   ├── memory.types.ts         # Enums and discriminated unions
+│   │   ├── local-embedding-provider.ts
+│   │   ├── semantic-search.ts
+│   │   └── subject-normalizer.ts
+│   ├── common/            # Database init, migrations, Drizzle setup, shared utilities
+│   │   ├── db/
+│   │   │   ├── schema/    # Drizzle table definitions (one file per table)
+│   │   │   ├── migrations.ts
+│   │   │   ├── drizzle.ts
+│   │   │   └── db.ts
+│   │   └── types/         # Shared types (ScopeRef, ScopeType)
+│   ├── projects/          # Project scope resolution and identity
+│   ├── repos/             # Repo root detection
+│   └── guidance/          # Guidance catalog (policy + scope skill URIs)
 ├── dist/                  # Compiled output (gitignored)
 ├── test/                  # Vitest integration tests
 ├── scripts/               # Build helpers and smoke tests
 ├── skills/                # Claude Code skill files shipped in the package
+├── .notes/                # Agent-facing work tickets (todo / in-progress / complete)
 └── docs/                  # Developer documentation (this file)
 ```
 
@@ -38,9 +62,10 @@ Calls `runCli()` from `src/cli/cli.ts`, which parses `argv` with yargs and dispa
 |---|---|
 | `hippo init` | Initialise local state (`~/.hippocampus`) |
 | `hippo apply` | Create or reinforce a memory |
-| `hippo search` | Semantic / full-text memory search |
+| `hippo search` | Search memories by subject (exact or hybrid mode) |
 | `hippo get-policy` | Print runtime policy and guidance references |
 | `hippo mcp serve` | Start the MCP stdio server |
+| `hippo project ensure` | Resolve and register the current project scope |
 | `hippo memories list` | List active memories by scope |
 | `hippo memories inspect --id` | Inspect a single memory record |
 | `hippo memories history --id` | Show the event audit log for a memory |
@@ -52,7 +77,7 @@ Calls `runCli()` from `src/cli/cli.ts`, which parses `argv` with yargs and dispa
 
 ### MCP server — `src/mcp/server.ts`
 
-Started via `hippo mcp serve`. Registers 7 tools and 2 resources, then reads/writes through `MemoryService` identically to the CLI. The server is configured in `~/.claude.json` (Claude) or `~/.codex/config.toml` (Codex) as `npx -y hippocampus mcp serve`.
+Started via `hippo mcp serve`. Registers tools and resources, then reads/writes through `MemoryService` identically to the CLI. The server is configured in `~/.claude.json` (Claude) or `~/.codex/config.toml` (Codex) as `npx -y hippocampus mcp serve`.
 
 ---
 
@@ -66,8 +91,10 @@ Started via `hippo mcp serve`. Registers 7 tools and 2 resources, then reads/wri
 - `MemoryRepository` — CRUD on memory records
 - `MemoryEmbeddingRepository` — vector embeddings
 - `MemoryEventRepository` — immutable audit log
+- `MemoryOwnershipRepository` — resolves user/project ownership for scope-gated queries
 - `MemoryRuntimeStateRepository` — last auto-archive sweep timestamp
 - `LocalEmbeddingProvider` — Transformers.js semantic model
+- `ProjectRepository` — project identity and path registration
 - `MemoryService` — orchestrates all of the above
 
 ---
@@ -82,14 +109,14 @@ Started via `hippo mcp serve`. Registers 7 tools and 2 resources, then reads/wri
                        │
                  MemoryService
                  (src/memory/memory.service.ts)
-          ┌────────────┼────────────┐
-   MemoryRepository  EventRepo  EmbeddingRepo
-          └────────────┼────────────┘
+          ┌────────────┼──────────────────┐
+   MemoryRepository  EventRepo  EmbeddingRepo  OwnershipRepo
+          └────────────┼──────────────────┘
                     SQLite
-              (~/.hippocampus/memory.db)
-                       │
-           LocalEmbeddingProvider
-          (Xenova/bge-small-en-v1.5)
+              (~/.hippocampus/hippocampus.db)
+
+   LocalEmbeddingProvider         ProjectRepository
+   (Xenova/bge-small-en-v1.5)     (src/projects/)
 ```
 
 ---
@@ -119,18 +146,13 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 
 `src/common/db/schema/` is the Drizzle schema source of truth. Each table lives in its own file and exports both the table definition and inferred `*Row` / `New*Row` types for persistence-layer use.
 
-Runtime migrations remain handwritten in `src/common/db/migrations.ts` and are the canonical migration path. This keeps the FTS5 virtual table and trigger setup explicit while Drizzle owns table schemas, inferred row types, and repository query execution. FTS5 reads use Drizzle raw SQL because `memories_fts` is a virtual table rather than a normal Drizzle schema table.
+Runtime migrations remain handwritten in `src/common/db/migrations.ts` and are the canonical migration path. This keeps the FTS5 virtual table and trigger setup explicit while Drizzle owns table schemas, inferred row types, and repository query execution. FTS5 reads use raw SQL via `better-sqlite3` directly because `memories_fts` is a virtual table rather than a normal Drizzle schema table.
 
-`src/memory/types/` contains service-facing mapped shapes. `Memory` is the normalized runtime shape returned by `MemoryRepository`, while `MemoryEvent` preserves the runtime event shape with `scope: ScopeRef` and raw stored JSON fields.
+`src/memory/types/` contains service-facing mapped shapes. `Memory` is the normalized runtime shape returned by `MemoryRepository`. `MemoryEvent` preserves the runtime event shape with `scope: ScopeRef` and raw stored JSON fields. `MemoryEmbedding` holds the cached vector shape from `MemoryEmbeddingRepository`.
 
 `src/memory/dto/` contains transport shapes. `MemoryDto` is the outward memory contract returned by search/list/get and carries `latestEventSummary`. `MemoryEventDto` is the parsed event-history contract returned by `memory-get-history`.
 
-Phase-1 ownership note:
-
-- external CLI/MCP scope remains `user` or `project`
-- local Hippocampus owner identity is tracked separately as `config.currentUserId`
-- `scope.id` for external user scope is not the same thing as the local configured owner id
-- pre-phase-1 local databases are treated as incompatible dev state and must be reset rather than migrated in place
+`src/memory/memory.types.ts` defines enums and discriminated unions: `MemoryType`, `MemoryOrigin`, `MemoryStatus`, `MemoryEventType`, and `ApplyMemoryDecision`.
 
 Key columns on a memory record (`memories` table):
 
@@ -177,21 +199,25 @@ Memory events are created only on these state transitions:
 
 ### MemoryType
 
-| Value | Intent |
-|---|---|
-| `procedural` | Repeatable actions or if-then behaviours |
-| `episodic` | Specific resolved events or situations |
-| `semantic` | Declarative facts or project understanding |
-| `preference` | Stable user or project preferences |
-| `decision` | Durable choices with rationale |
+Each memory type represents a different cognitive role. Choosing the right type determines how a memory is used during retrieval and reinforcement.
+
+| Value | Intent | Examples |
+|---|---|---|
+| `procedural` | Repeatable actions, workflows, or if-then behaviours — the *how* | "Always run tests before committing", "Use pnpm, not npm" |
+| `episodic` | Specific resolved events, past decisions, or situations — the *what happened* | "Migrated auth to JWT on 2024-03-10", "Fixed the N+1 query in user list" |
+| `semantic` | Declarative facts or stable project understanding — the *what is* | "This service owns the billing domain", "The API uses cursor-based pagination" |
+| `preference` | Stable user or project preferences — the *how we like it* | "Prefer arrow functions", "Use tabs not spaces", "Dark mode only" |
+| `decision` | Durable choices with rationale — the *why we chose this* | "Chose SQLite over Postgres for local-first simplicity", "Rejected Redux; too much boilerplate" |
 
 ### MemoryOrigin
 
-| Value | Initial status | Strength |
-|---|---|---|
-| `explicit_user_statement` | `active` | 3 |
-| `tool_observation` | `active` | 2 |
-| `observed_pattern` | `candidate` | 1 |
+| Value | Initial status | Strength | When to use |
+|---|---|---|---|
+| `explicit_user_statement` | `active` | 3 | User directly stated something |
+| `tool_observation` | `active` | 2 | Agent inferred from tool output or code |
+| `observed_pattern` | `candidate` | 1 | Recurring signal not yet confirmed |
+
+`observed_pattern` memories start as `candidate` and require reinforcement before they appear in normal search and list results.
 
 ### MemoryStatus
 
@@ -211,13 +237,19 @@ Archived and suppressed memories are retained and inspectable via `memories insp
 
 ---
 
-## Search: hybrid retrieval
+## Search
 
-`MemoryService.searchMemories()` runs in two stages:
+`MemoryService.searchMemories()` supports two match modes selected by the caller:
 
-1. **Semantic** — generates a query embedding, computes cosine similarity against all active memory embeddings in scope, filters to similarity ≥ 0.25, and ranks by score → retrieval strength → stable rank. Returns up to N results (default 10, max 100).
+**`exact`** — Runs a normalized `subject_key` equality lookup via Drizzle (`WHERE subject_key = ? AND status = 'active'`). Fast and deterministic. Returns results ordered by retrieval strength and stable rank.
 
-2. **FTS fallback** — if the embedding model is unavailable or no semantic results pass the threshold, falls back to SQLite FTS5 full-text search on `subject`, `statement`, and `details`.
+**`hybrid`** (default) — Runs both exact and semantic retrieval, then merges and deduplicates:
+1. Exact `subject_key` lookup (same as exact mode above) — results appear first.
+2. Semantic similarity scoring — generates a query embedding via `LocalEmbeddingProvider`, scores candidates by cosine similarity, filters to similarity ≥ 0.25, and appends any results not already in the exact set.
+
+FTS5 is used **internally as a candidate pre-filter** within the semantic path: `listFtsCandidates()` queries the `memories_fts` virtual table to get a smaller candidate pool before embedding comparison. If FTS5 returns no results or matches the full active set, the semantic path falls back to a full scan of active memories. FTS5 is not a retrieval mode exposed to callers.
+
+If the embedding model is unavailable when hybrid is requested, the search degrades to exact-only and returns a `fallbackReason`.
 
 Retrieval side-effect: `retrieval_count` is incremented and `strength` is boosted (by `RETRIEVAL_BOOST_FACTOR`) once `retrieval_count` reaches `RETRIEVAL_BOOST_THRESHOLD`.
 
@@ -251,12 +283,13 @@ Defined in `src/memory/policies/memory.policy.ts`:
 | Tool | Description |
 |---|---|
 | `memory-apply-observation` | Create or reinforce a memory |
-| `memory-search` | Semantic / FTS hybrid search |
+| `memory-search` | Search memories by subject (exact or hybrid mode) |
 | `memory-list` | Broad recall by scope and optional type |
 | `memory-get` | Fetch a single memory and its supersession chain |
 | `memory-get-history` | Fetch the immutable event log for a memory |
 | `memory-contradict` | Suppress an existing memory and create a replacement |
 | `memory-get-policy` | Return the current policy and guidance resource URIs |
+| `project-ensure` | Resolve and register the current project scope |
 
 ### Resources
 
@@ -271,7 +304,8 @@ Defined in `src/memory/policies/memory.policy.ts`:
 
 ```
 ~/.hippocampus/                          # HIPPOCAMPUS_HOME
-├── memory.db                            # SQLite database (all memory data)
+├── hippocampus.db                       # SQLite database (all memory data)
+├── config.json                          # Schema version, currentUserId
 ├── installer-state.json                 # Tracks what `hippo setup` installed
 ├── bootstrap/
 │   ├── claude-session-start.mjs        # Generated by `hippo setup claude`

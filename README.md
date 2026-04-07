@@ -299,15 +299,6 @@ In an interactive terminal, `hippo memories delete` can prompt for the memory id
 - no bulk reset or hard purge command
 - no published Homebrew formula yet
 
-## Next
-
-The next active area is memory linking on top of the explicit lifecycle state model.
-
-- Keep `memory-search` query-based and `memory-list` as the broad recall surface unless a future pass intentionally changes that split.
-- Add memory linking without weakening explicit lifecycle transitions or reviving archived memories implicitly.
-- Memory linking is the next step after semantic retrieval, not part of the current feature set.
-- A future cloud/service version may choose a larger embedding model, but that decision is out of scope here.
-
 ## First Release Checklist
 
 - Stop rewriting or squashing migration history.

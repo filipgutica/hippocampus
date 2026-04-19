@@ -16,16 +16,14 @@ export const registerMemorySearchTool = (server: McpServer, memoryService: Memor
         a query-based tool, so always provide \`subject\`.
         For broader recall across a class of memories, use
         \`memory-list\` with scope plus type. Normal results
-        only include active memories. Search uses hybrid
-        retrieval by default and degrades to exact if semantic
-        retrieval is unavailable.
+        only include active memories. Search uses exact
+        subject matching plus FTS retrieval within the scope.
       `),
       inputSchema: {
         scope: mcpScopeSchema,
         type: z.enum(MEMORY_TYPES).optional(),
         subject: z.string().min(1),
         limit: z.number().int().positive().max(100).optional(),
-        matchMode: z.enum(['exact', 'hybrid']).optional(),
       },
     },
     async input => {
@@ -34,7 +32,6 @@ export const registerMemorySearchTool = (server: McpServer, memoryService: Memor
         type: input.type ?? null,
         subject: input.subject,
         limit: input.limit ?? null,
-        matchMode: input.matchMode ?? null,
       })
 
       return {

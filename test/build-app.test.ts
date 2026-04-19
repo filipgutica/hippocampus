@@ -84,8 +84,7 @@ describe('buildApp', () => {
         applied_at TEXT NOT NULL
       );
       INSERT INTO schema_migrations (version, name, applied_at) VALUES
-        (1, 'current_memory_schema', '2026-04-04T00:00:00.000Z'),
-        (2, 'memory_fts5_index', '2026-04-04T00:00:00.000Z');
+        (1, 'current_memory_schema', '2026-04-04T00:00:00.000Z');
       CREATE TABLE memories (
         id TEXT PRIMARY KEY,
         scope_type TEXT NOT NULL,

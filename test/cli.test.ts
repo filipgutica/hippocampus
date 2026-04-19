@@ -168,7 +168,6 @@ describe('runCli', () => {
         const result = await app.memoryService.searchMemories({
           scope: { type: 'project', id: ensuredProjectId },
           subject: 'prefer pnpm',
-          matchMode: 'exact',
           limit: 10,
         })
 
@@ -269,7 +268,7 @@ describe('runCli', () => {
     })
   })
 
-  it('includes degraded-mode guidance in human-readable search output', async () => {
+  it('formats human-readable search output without search-mode metadata', async () => {
     const io = createIo()
 
     await runSearchCommand(
@@ -278,12 +277,8 @@ describe('runCli', () => {
           searchMemories: async () => ({
             items: [],
             total: 0,
-            matchMode: 'exact',
-            requestedMatchMode: 'hybrid',
-            effectiveMatchMode: 'exact',
-            fallbackReason: 'Semantic retrieval unavailable; returned exact results only.',
           }),
-      },
+        },
       } as unknown as RuntimeApp,
       {
         scope: { type: 'project', id: '/tmp/example-project' },
@@ -294,10 +289,8 @@ describe('runCli', () => {
       false,
     )
 
-    expect(io.getStdout()).toContain('requestedMatchMode: hybrid')
-    expect(io.getStdout()).toContain('effectiveMatchMode: exact')
-    expect(io.getStdout()).toContain('notice: Semantic retrieval unavailable; returned exact results only.')
-    expect(io.getStdout()).toContain('guidance: for broader recall, use memory-list (memories list) with scope + type')
+    expect(io.getStdout()).toContain('total: 0')
+    expect(io.getStdout()).toContain('items: none')
   })
 
   it('lists, inspects, shows history, and deletes memories via the CLI', async () => {
@@ -381,7 +374,6 @@ describe('runCli', () => {
         const result = await app.memoryService.searchMemories({
           scope: { type: 'project', id: scopeId },
           subject: 'prefer pnpm',
-          matchMode: 'exact',
           limit: 10,
         })
 
@@ -717,7 +709,6 @@ describe('runCli', () => {
           arguments: {
             scope: { type: 'project', id: scopeId },
             subject: 'prefer pnpm',
-            matchMode: 'exact',
             limit: 10,
           },
         })
@@ -789,13 +780,11 @@ describe('runCli', () => {
         const repoRootSearch = await app.memoryService.searchMemories({
           scope: { type: 'project', id: scopeId },
           subject: 'run tests before commit',
-          matchMode: 'exact',
           limit: 10,
         })
         const repoSubdirSearch = await app.memoryService.searchMemories({
           scope: { type: 'project', id: repoSubdir },
           subject: 'run tests before commit',
-          matchMode: 'exact',
           limit: 10,
         })
 
@@ -817,13 +806,11 @@ describe('runCli', () => {
         const rootScopedMemory = await app.memoryService.searchMemories({
           scope: { type: 'project', id: scopeId },
           subject: 'use package-local scripts',
-          matchMode: 'exact',
           limit: 10,
         })
         const subdirScopedMemory = await app.memoryService.searchMemories({
           scope: { type: 'project', id: repoSubdir },
           subject: 'use package-local scripts',
-          matchMode: 'exact',
           limit: 10,
         })
 

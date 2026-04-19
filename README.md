@@ -19,12 +19,7 @@ Hippocampus currently supports:
 
 Local state lives in `~/.hippocampus` by default. Set `HIPPOCAMPUS_HOME` to use a different location.
 
-Hybrid retrieval uses `Xenova/bge-small-en-v1.5` through Transformers.js. Model artifacts are cached automatically under Hippocampus home on first semantic use and reused across later runs:
-
-- `$HIPPOCAMPUS_HOME/cache/transformers/`
-- `~/.hippocampus/cache/transformers/` when `HIPPOCAMPUS_HOME` is unset
-
-Cold-cache semantic retrieval may need network access once. If semantic retrieval is unavailable, `memory-search` falls back to exact results and tells the caller to broaden recall with `memory-list`.
+`memory-search` uses exact subject matching plus FTS retrieval within the requested scope. There is no semantic fallback or caller-selectable search mode.
 
 Hippocampus is still pre-stable and local-only during development. The local SQLite schema may change, and local state may need to be reset between development iterations until a release compatibility policy is locked.
 
@@ -116,7 +111,7 @@ Note:
 - destructive deletion is still intentionally not exposed on the default MCP surface
 - CLI delete is kept for operator/debug workflows
 - no extra retrieval tool is exposed in v1; `memory-search` remains the query-based retrieval primitive
-- `memory-search` requires `subject` and uses hybrid retrieval by default
+- `memory-search` requires `subject` and uses exact subject matching plus FTS retrieval
 - `memory-list` is the broad recall path for `scope + type`
 
 Policy discovery flow:
@@ -160,7 +155,6 @@ pnpm start:cli -- get-policy --json
 pnpm start:mcp
 pnpm smoke:init
 pnpm smoke:mcp
-pnpm smoke:semantic
 ```
 
 For local checkout development, add the built CLI to your shell `PATH` so `hippo` can be invoked from anywhere:
@@ -196,8 +190,7 @@ Default local files:
 
 If you set `HIPPOCAMPUS_HOME`, those files are created under that directory instead.
 
-Semantic retrieval uses a cached `Xenova/bge-small-en-v1.5` model automatically. Exact search, init, MCP startup, and the rest of the app still work even if semantic retrieval is unavailable.
-For a live provider smoke test, run `pnpm smoke:semantic` after building; it exercises a real Hugging Face model download/load through the provider and uses the local Transformers cache under Hippocampus home.
+Exact search, init, MCP startup, and the rest of the app continue to work without any extra retrieval component.
 
 Inspect the SQLite database directly if needed:
 
@@ -250,8 +243,7 @@ Current retrieval behavior:
 
 - `observed_pattern` memories start as `candidate`
 - `candidate` memories do not appear in normal `memory-search` or `memory-list` results
-- `memory-search` requires `subject` and uses hybrid retrieval by default
-- `memory-search` degrades to exact results if semantic retrieval is unavailable
+- `memory-search` requires `subject` and uses exact subject matching plus FTS retrieval
 - `memory-search` updates retrieval-side salience for returned top-N memories only
 - `memory-list` is the broad recall path for `scope + type`
 - `memory-list`, `memory-get`, and `memory-get-history` stay retrieval-neutral
@@ -293,8 +285,7 @@ In an interactive terminal, `hippo memories delete` can prompt for the memory id
 
 ## Current Limitations
 
-- first semantic use may need network access to populate the local model cache
-- degraded exact fallback means semantic retrieval problems are non-fatal but still need to be noticed by callers
+- no extra retrieval component is shipped in this release
 - no resurrection workflow for archived memories
 - no bulk reset or hard purge command
 - no published Homebrew formula yet

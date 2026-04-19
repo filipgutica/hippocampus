@@ -1,9 +1,11 @@
 ---
 title: "Remove local semantic search and embeddings"
-status: "todo"
+ticket-id: "2026-04-06-remove-local-semantic-search"
+session-id: "019d853f-18a7-70a0-8cea-de0a1912ca2a"
+status: "complete"
 created: "2026-04-06"
-started: null
-completed: null
+started: "2026-04-13"
+completed: "2026-04-18"
 tags: ["simplification", "search", "embeddings", "fts"]
 ---
 
@@ -130,12 +132,46 @@ fully out of scope for this local-first implementation.
 
 ## Approved Plan
 
-Not started.
+Remove the local embedding and semantic-search pipeline from Hippocampus while keeping
+memory taxonomy and core retrieval behavior intact. Simplify `memory-search` to exact
+subject matching plus FTS, remove the embedding persistence/runtime wiring and
+Transformers.js dependency, update CLI/MCP/docs/tests to match the new contract, and
+validate the result with typecheck, lint, and tests.
+
+## Completion Criteria
+
+- Local embedding runtime, persistence, schema, and smoke script are removed.
+- `memory-search` no longer exposes hybrid or fallback metadata and uses exact plus FTS only.
+- Docs, MCP guidance, CLI behavior, and tests are updated to match the simplified contract.
+- Validation passes for typecheck, lint, and the applicable test suites.
+- Follow-up cleanup from simplification review is applied where it improves correctness or reduces noise without widening scope.
 
 ## Work Log
 
-No work logged yet.
+- 2026-04-13: Implemented the core semantic-search removal. Deleted the local embedding provider,
+  semantic search helpers, embedding repository/schema/types, and semantic smoke script. Removed
+  runtime wiring from `build-app`, removed the Transformers cache path from app paths, and rewrote
+  the baseline schema/migrations so fresh databases no longer create `memory_embeddings`.
+- 2026-04-13: Simplified the public retrieval contract. Removed search match-mode input and
+  fallback metadata from DTOs, CLI parsing/output, and the MCP `memory-search` schema/description.
+  Updated README, architecture docs, and runtime policy guidance to describe exact subject matching
+  plus FTS retrieval only. Removed the `@huggingface/transformers` dependency and refreshed the lockfile.
+- 2026-04-13: Updated test coverage to reflect the new behavior. Removed embedding-provider tests,
+  replaced semantic-specific memory-service cases with exact/FTS cases, updated CLI/MCP tests for
+  the simplified search contract, and validated the full change with `pnpm typecheck`, `pnpm lint`,
+  and `pnpm test`.
+- 2026-04-14: Performed a cleanup pass after simplification review. Restored dropped repo ignore
+  patterns in `.gitignore`, removed stale architecture-doc references to Transformers cache
+  internals, simplified low-signal tests, and narrowed the FTS recovery path so only actual MATCH
+  parse failures degrade while unrelated repository errors still surface.
+- 2026-04-18: Simplified the pre-release migration model to a single canonical first-run baseline
+  that includes the current schema and FTS5 setup. Updated `docs/architecture.md` to remove the
+  last stale hybrid/embedding references, aligned the legacy-db guard test with the one-migration
+  baseline, and revalidated with targeted search/init tests plus typecheck and lint.
 
 ## Completion Summary
 
-Not completed.
+Removed the local semantic-search and embedding pipeline end to end while keeping FTS5 as the
+retrieval layer. `memory-search` now uses exact subject matching plus FTS only, the embedding
+runtime/schema/dependencies are gone, docs and MCP/CLI guidance were updated to the simplified
+contract, and the pre-release DB setup was reduced to one canonical first-run baseline migration.

@@ -19,16 +19,13 @@ hippocampus/
 │   ├── memory/            # Core memory domain
 │   │   ├── dto/           # Transport shapes (input/output contracts for CLI and MCP)
 │   │   ├── policies/      # Policy logic: apply, ranking, scope validation
-│   │   ├── types/         # Internal runtime shapes (Memory, MemoryEvent, MemoryEmbedding)
+│   │   ├── types/         # Internal runtime shapes (Memory, MemoryEvent)
 │   │   ├── memory.service.ts
 │   │   ├── memory.repository.ts
 │   │   ├── memory-event.repository.ts
-│   │   ├── memory-embedding.repository.ts
 │   │   ├── memory-ownership.repository.ts
 │   │   ├── memory-runtime-state.repository.ts
 │   │   ├── memory.types.ts         # Enums and discriminated unions
-│   │   ├── local-embedding-provider.ts
-│   │   ├── semantic-search.ts
 │   │   └── subject-normalizer.ts
 │   ├── common/            # Database init, migrations, Drizzle setup, shared utilities
 │   │   ├── db/
@@ -62,7 +59,7 @@ Calls `runCli()` from `src/cli/cli.ts`, which parses `argv` with yargs and dispa
 |---|---|
 | `hippo init` | Initialise local state (`~/.hippocampus`) |
 | `hippo apply` | Create or reinforce a memory |
-| `hippo search` | Search memories by subject (exact or hybrid mode) |
+| `hippo search` | Search memories by subject using exact matching plus FTS |
 | `hippo get-policy` | Print runtime policy and guidance references |
 | `hippo mcp serve` | Start the MCP stdio server |
 | `hippo project ensure` | Resolve and register the current project scope |
@@ -89,11 +86,9 @@ Started via `hippo mcp serve`. Registers tools and resources, then reads/writes 
 
 **`RuntimeApp`** — used by every other command and the MCP server. Wires:
 - `MemoryRepository` — CRUD on memory records
-- `MemoryEmbeddingRepository` — vector embeddings
 - `MemoryEventRepository` — immutable audit log
 - `MemoryOwnershipRepository` — resolves user/project ownership for scope-gated queries
 - `MemoryRuntimeStateRepository` — last auto-archive sweep timestamp
-- `LocalEmbeddingProvider` — Transformers.js semantic model
 - `ProjectRepository` — project identity and path registration
 - `MemoryService` — orchestrates all of the above
 
@@ -110,13 +105,13 @@ Started via `hippo mcp serve`. Registers tools and resources, then reads/writes 
                  MemoryService
                  (src/memory/memory.service.ts)
           ┌────────────┼──────────────────┐
-   MemoryRepository  EventRepo  EmbeddingRepo  OwnershipRepo
+   MemoryRepository  EventRepo  OwnershipRepo
           └────────────┼──────────────────┘
                     SQLite
               (~/.hippocampus/hippocampus.db)
 
-   LocalEmbeddingProvider         ProjectRepository
-   (Xenova/bge-small-en-v1.5)     (src/projects/)
+   ProjectRepository
+   (src/projects/)
 ```
 
 ---
@@ -138,8 +133,6 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
    - Insert into `memory_events` (always — immutable audit record)
    - Event payloads are runtime-validated before `observationJson` / `sourceJson` are serialized
 
-4. **Eager embedding** — after the transaction commits, `scheduleEagerEmbedding()` enqueues embedding generation as a microtask (`queueMicrotask`) via `LocalEmbeddingProvider`. The model (`Xenova/bge-small-en-v1.5`) runs locally; its cache lives at `$HIPPOCAMPUS_HOME/cache/transformers/`.
-
 ---
 
 ## Memory model
@@ -148,7 +141,7 @@ End-to-end for `hippo apply` or the `memory-apply-observation` MCP tool:
 
 Runtime migrations remain handwritten in `src/common/db/migrations.ts` and are the canonical migration path. This keeps the FTS5 virtual table and trigger setup explicit while Drizzle owns table schemas, inferred row types, and repository query execution. FTS5 reads use raw SQL via `better-sqlite3` directly because `memories_fts` is a virtual table rather than a normal Drizzle schema table.
 
-`src/memory/types/` contains service-facing mapped shapes. `Memory` is the normalized runtime shape returned by `MemoryRepository`. `MemoryEvent` preserves the runtime event shape with `scope: ScopeRef` and raw stored JSON fields. `MemoryEmbedding` holds the cached vector shape from `MemoryEmbeddingRepository`.
+`src/memory/types/` contains service-facing mapped shapes. `Memory` is the normalized runtime shape returned by `MemoryRepository`. `MemoryEvent` preserves the runtime event shape with `scope: ScopeRef` and raw stored JSON fields.
 
 `src/memory/dto/` contains transport shapes. `MemoryDto` is the outward memory contract returned by search/list/get and carries `latestEventSummary`. `MemoryEventDto` is the parsed event-history contract returned by `memory-get-history`.
 
@@ -239,17 +232,7 @@ Archived and suppressed memories are retained and inspectable via `memories insp
 
 ## Search
 
-`MemoryService.searchMemories()` supports two match modes selected by the caller:
-
-**`exact`** — Runs a normalized `subject_key` equality lookup via Drizzle (`WHERE subject_key = ? AND status = 'active'`). Fast and deterministic. Returns results ordered by retrieval strength and stable rank.
-
-**`hybrid`** (default) — Runs both exact and semantic retrieval, then merges and deduplicates:
-1. Exact `subject_key` lookup (same as exact mode above) — results appear first.
-2. Semantic similarity scoring — generates a query embedding via `LocalEmbeddingProvider`, scores candidates by cosine similarity, filters to similarity ≥ 0.25, and appends any results not already in the exact set.
-
-FTS5 is used **internally as a candidate pre-filter** within the semantic path: `listFtsCandidates()` queries the `memories_fts` virtual table to get a smaller candidate pool before embedding comparison. If FTS5 returns no results or matches the full active set, the semantic path falls back to a full scan of active memories. FTS5 is not a retrieval mode exposed to callers.
-
-If the embedding model is unavailable when hybrid is requested, the search degrades to exact-only and returns a `fallbackReason`.
+`MemoryService.searchMemories()` uses exact subject matching plus FTS retrieval within the caller-provided scope. There is no caller-selectable retrieval mode and no fallback metadata exposed to callers.
 
 Retrieval side-effect: `retrieval_count` is incremented and `strength` is boosted (by `RETRIEVAL_BOOST_FACTOR`) once `retrieval_count` reaches `RETRIEVAL_BOOST_THRESHOLD`.
 
@@ -283,7 +266,7 @@ Defined in `src/memory/policies/memory.policy.ts`:
 | Tool | Description |
 |---|---|
 | `memory-apply-observation` | Create or reinforce a memory |
-| `memory-search` | Search memories by subject (exact or hybrid mode) |
+| `memory-search` | Search memories by subject using exact matching plus FTS |
 | `memory-list` | Broad recall by scope and optional type |
 | `memory-get` | Fetch a single memory and its supersession chain |
 | `memory-get-history` | Fetch the immutable event log for a memory |
@@ -310,8 +293,6 @@ Defined in `src/memory/policies/memory.policy.ts`:
 ├── bootstrap/
 │   ├── claude-session-start.mjs        # Generated by `hippo setup claude`
 │   └── codex-session-start.mjs         # Generated by `hippo setup codex`
-└── cache/
-    └── transformers/                    # Hugging Face model cache (bge-small-en-v1.5)
 ```
 
 The default location is `~/.hippocampus`. Override with `HIPPOCAMPUS_HOME`.

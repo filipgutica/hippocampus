@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { AppError } from '../common/errors.js'
 import { runTransaction } from '../common/db/db.js'
 import { resolveCanonicalScopeId } from '../common/resolve-canonical-scope-id.js'
-import { MemoryEmbeddingRepository } from './memory-embedding.repository.js'
-import type { EmbeddingProvider } from './local-embedding-provider.js'
 import { normalizeSubject } from './subject-normalizer.js'
 import {
   memoryDraftInputSchema,
@@ -17,7 +15,7 @@ import type { DeleteMemoryInput } from './dto/delete-memory.dto.js'
 import type { GetPolicyResult } from './dto/get-policy.dto.js'
 import type { ListMemoriesInput } from './dto/list-memories.dto.js'
 import type { MemoryIdInput } from './dto/memory-id.dto.js'
-import type { SearchMatchMode, SearchMemoriesInput } from './dto/search-memories.dto.js'
+import type { SearchMemoriesInput } from './dto/search-memories.dto.js'
 import { validateScope } from './policies/memory-scope.policy.js'
 import {
   AUTO_ARCHIVE_SWEEP_COOLDOWN_HOURS,
@@ -39,7 +37,6 @@ import { compareMemoryRank, rankMemories } from './policies/memory-ranking.polic
 import { MemoryRepository } from './memory.repository.js'
 import { MemoryEventRepository } from './memory-event.repository.js'
 import { MemoryRuntimeStateRepository } from './memory-runtime-state.repository.js'
-import { cosineSimilarity, getSemanticSourceText, getSourceTextHash, parseEmbedding } from './semantic-search.js'
 import type {
   ArchiveStaleMemoriesResult,
   ApplyMemoryResult,
@@ -66,19 +63,12 @@ import type { EnsuredProject } from '../projects/project.types.js'
 import { ProjectRepository } from '../projects/project.repository.js'
 
 type MemoryServiceDeps = {
-  embeddingProvider: EmbeddingProvider
-  memoryEmbeddingRepository: MemoryEmbeddingRepository
   memoryRepository: MemoryRepository
   memoryEventRepository: MemoryEventRepository
   memoryRuntimeStateRepository: MemoryRuntimeStateRepository
   projectRepository: ProjectRepository
   policyVersion: string
   db: InstanceType<typeof Database>
-}
-
-type ScoredMemory = {
-  memory: Memory
-  score: number
 }
 
 const toPositiveLimit = (limit: number | null | undefined): number => {
@@ -233,13 +223,20 @@ const canonicalizeScope = (scope: ScopeRef): ScopeRef => ({
 const toContradictionReason = ({ replacementMemoryId }: { replacementMemoryId: string }): string =>
   `Memory was contradicted and superseded by ${replacementMemoryId}.`
 
-const SEMANTIC_MIN_SCORE = 0.25
-
 /**
  * Builds the audit reason recorded for the replacement memory created during contradiction.
  */
 const toReplacementReason = ({ oldMemoryId }: { oldMemoryId: string }): string =>
   `Memory was created as the active replacement for contradicted memory ${oldMemoryId}.`
+
+const isRecoverableFtsQueryError = (error: unknown): error is Error => {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  const message = error.message.toLowerCase()
+  return message.includes('fts5:') || /^no such column: [a-z0-9_-]+$/i.test(error.message)
+}
 
 /**
  * Removes transport-only provenance from an observation before persisting it in event history.
@@ -363,22 +360,6 @@ const toLatestMemoryEventSummary = (event: {
 })
 
 /**
- * Falls back to hybrid retrieval when the caller does not request a specific search mode.
- */
-const toMatchMode = (value: SearchMatchMode | null | undefined): SearchMatchMode => value ?? 'hybrid'
-
-const isSemanticModelUnavailableError = (error: unknown): error is AppError =>
-  error instanceof AppError && error.code === 'SEMANTIC_MODEL_NOT_AVAILABLE'
-
-/**
- * Explains why the search path fell back to exact matching only.
- */
-const toSearchFallbackReason = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : 'unknown error'
-  return `Semantic retrieval unavailable; returned exact results only. ${message}`
-}
-
-/**
  * Orders exact-search candidates by effective retrieval strength and then stable rank.
  */
 const compareSearchMemories = ({
@@ -406,29 +387,6 @@ const compareSearchMemories = ({
   }
 
   return compareMemoryRank(left, right)
-}
-
-/**
- * Orders semantic candidates by score first, then by the same retrieval/rank tie-breakers.
- */
-const compareScoredMemories = ({
-  left,
-  right,
-  now,
-}: {
-  left: ScoredMemory
-  right: ScoredMemory
-  now: string
-}): number => {
-  if (right.score !== left.score) {
-    return right.score - left.score
-  }
-
-  return compareSearchMemories({
-    left: left.memory,
-    right: right.memory,
-    now,
-  })
 }
 
 export class MemoryService {
@@ -747,146 +705,6 @@ export class MemoryService {
   }
 
   /**
-   * Refreshes the cached embedding for a memory when its source text or model fingerprint changes.
-   */
-  private async ensureMemoryEmbedding(memory: Memory, modelFingerprint: string): Promise<number[]> {
-    const sourceText = getSemanticSourceText(memory)
-    const sourceTextHash = getSourceTextHash(sourceText)
-    const existing = this.deps.memoryEmbeddingRepository.getByMemoryId(memory.id)
-
-    if (
-      existing &&
-      existing.modelId === this.deps.embeddingProvider.getModelId() &&
-      existing.modelFingerprint === modelFingerprint &&
-      existing.sourceTextHash === sourceTextHash
-    ) {
-      return parseEmbedding(existing.embeddingJson)
-    }
-
-    const embedding = await this.deps.embeddingProvider.embed(sourceText)
-
-    this.deps.memoryEmbeddingRepository.upsert({
-      memoryId: memory.id,
-      modelId: this.deps.embeddingProvider.getModelId(),
-      modelFingerprint,
-      embeddingJson: JSON.stringify(embedding),
-      sourceTextHash,
-      updatedAt: new Date().toISOString(),
-    })
-
-    return embedding
-  }
-
-  /**
-   * Scores semantic candidates using FTS shortcuts when possible, otherwise falls back to a full scan.
-   */
-  private async searchBySemanticSimilarity(input: {
-    scope: ScopeRef
-    type: MemoryType | null
-    query: string
-    queryEmbedding: number[]
-    now: string
-  }): Promise<Memory[]> {
-    try {
-      const candidates = this.deps.memoryRepository.listFtsCandidates({
-        scope: input.scope,
-        type: input.type,
-        query: input.query,
-      })
-      if (candidates.length === 0) {
-        return this.searchBySemanticSimilarityFromFullScan(input)
-      }
-
-      const activeCount = this.deps.memoryRepository.countActive({
-        scope: input.scope,
-        type: input.type,
-      })
-
-      if (candidates.length === activeCount) {
-        return this.scoreSemanticCandidates({
-          candidates,
-          queryEmbedding: input.queryEmbedding,
-          now: input.now,
-        })
-      }
-    } catch {
-      // Fall through to the exhaustive scan.
-    }
-
-    return this.searchBySemanticSimilarityFromFullScan(input)
-  }
-
-  /**
-   * Scores every candidate memory when the FTS shortcut is not sufficient.
-   */
-  private async searchBySemanticSimilarityFromFullScan(input: {
-    scope: ScopeRef
-    type: MemoryType | null
-    queryEmbedding: number[]
-    now: string
-  }): Promise<Memory[]> {
-    const candidates = this.deps.memoryRepository.list({
-      scope: input.scope,
-      type: input.type,
-      limit: null,
-    })
-
-    if (candidates.length === 0) {
-      return []
-    }
-
-    return this.scoreSemanticCandidates({
-      candidates,
-      queryEmbedding: input.queryEmbedding,
-      now: input.now,
-    })
-  }
-
-  /**
-   * Computes cosine similarity for each candidate and returns the surviving set in rank order.
-   */
-  private async scoreSemanticCandidates(input: {
-    candidates: Memory[]
-    queryEmbedding: number[]
-    now: string
-  }): Promise<Memory[]> {
-    const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
-    const embeddings = await Promise.all(
-      input.candidates.map(candidate => this.ensureMemoryEmbedding(candidate, modelFingerprint)),
-    )
-
-    const scored: ScoredMemory[] = input.candidates
-      .map((memory, i) => ({ memory, score: cosineSimilarity(input.queryEmbedding, embeddings[i]) }))
-      .filter(item => item.score >= SEMANTIC_MIN_SCORE)
-
-    return scored
-      .sort((left, right) =>
-        compareScoredMemories({
-          left,
-          right,
-          now: input.now,
-        }),
-      )
-      .map(item => item.memory)
-  }
-
-  /**
-   * Warms the embedding cache asynchronously without blocking the calling write path.
-   */
-  private scheduleEagerEmbedding(memory: Memory): void {
-    globalThis.queueMicrotask(() => {
-      void (async () => {
-        try {
-          const modelFingerprint = await this.deps.embeddingProvider.getModelFingerprint()
-          await this.ensureMemoryEmbedding(memory, modelFingerprint)
-        } catch {
-          // Best-effort cache warming only.
-        }
-      })()
-    })
-  }
-
-  /**
    * Returns exact-search matches ordered by effective retrieval strength and stable rank.
    */
   private getExactSearchItems(input: {
@@ -1051,12 +869,9 @@ export class MemoryService {
     })
 
     if ('memory' in result) {
-      const memory = result.memory as Memory
-      this.scheduleEagerEmbedding(memory)
-
       return {
         ...result,
-        memory: this.enrichMemoryDtos([memory])[0]!,
+        memory: this.enrichMemoryDtos([result.memory as Memory])[0]!,
       } as ApplyMemoryResult
     }
 
@@ -1064,67 +879,14 @@ export class MemoryService {
   }
 
   /**
-   * Runs exact or hybrid retrieval and persists access state for returned memories.
+   * Runs exact plus FTS retrieval and persists access state for returned memories.
    */
   async searchMemories(input: SearchMemoriesInput): Promise<SearchResult> {
     const limit = toPositiveLimit(input.limit)
     const scope = canonicalizeScope(validateScope(input.scope))
-    const requestedMatchMode = toMatchMode(input.matchMode)
     const type = input.type == null ? null : ensureMemoryType(input.type)
-    const semanticQuery = ensureNonEmpty(input.subject, 'INVALID_SEARCH_SUBJECT', 'subject must not be empty for memory-search.')
-    const subject = normalizeSubject(semanticQuery)
+    const subject = normalizeSubject(ensureNonEmpty(input.subject, 'INVALID_SEARCH_SUBJECT', 'subject must not be empty for memory-search.'))
     const now = new Date().toISOString()
-
-    if (requestedMatchMode === 'exact') {
-      this.maybeArchiveStaleMemories()
-
-      const exactItems = this.getExactSearchItems({
-        scope,
-        type,
-        subject,
-        now,
-      })
-      const finalItems = exactItems.slice(0, limit)
-      const returnedItems = this.persistSearchRetrievalState(finalItems, now)
-
-      return {
-        items: this.enrichMemoryDtos(returnedItems),
-        total: exactItems.length,
-        matchMode: 'exact',
-        requestedMatchMode: 'exact',
-        effectiveMatchMode: 'exact',
-      }
-    }
-
-    let queryEmbedding: number[]
-
-    try {
-      queryEmbedding = await this.deps.embeddingProvider.embed(semanticQuery)
-    } catch (error) {
-      if (!isSemanticModelUnavailableError(error)) {
-        throw error
-      }
-
-      this.maybeArchiveStaleMemories()
-
-      const exactItems = this.getExactSearchItems({
-        scope,
-        type,
-        subject,
-        now,
-      })
-      const finalItems = exactItems.slice(0, limit)
-      const returnedItems = this.persistSearchRetrievalState(finalItems, now)
-
-      return {
-        items: this.enrichMemoryDtos(returnedItems),
-        total: exactItems.length,
-        matchMode: 'exact',
-        requestedMatchMode,
-        effectiveMatchMode: 'exact',
-        fallbackReason: toSearchFallbackReason(error),
-      }
-    }
 
     this.maybeArchiveStaleMemories()
 
@@ -1134,23 +896,35 @@ export class MemoryService {
       subject,
       now,
     })
-    const semanticItems = await this.searchBySemanticSimilarity({
-      scope,
-      type,
-      query: semanticQuery,
-      queryEmbedding,
-      now,
-    })
-    const items = [...exactItems, ...semanticItems.filter(memory => !exactItems.some(item => item.id === memory.id))]
-    const finalItems = items.slice(0, limit)
+    let ftsItems: Memory[] = []
+
+    try {
+      ftsItems = this.deps.memoryRepository.listFtsCandidates({
+        scope,
+        type,
+        query: subject,
+      })
+    } catch (error) {
+      if (!isRecoverableFtsQueryError(error)) {
+        throw error
+      }
+    }
+
+    const items = [...exactItems, ...ftsItems.filter(memory => !exactItems.some(item => item.id === memory.id))]
+    const finalItems = items
+      .sort((left, right) =>
+        compareSearchMemories({
+          left,
+          right,
+          now,
+        }),
+      )
+      .slice(0, limit)
     const returnedItems = this.persistSearchRetrievalState(finalItems, now)
 
     return {
       items: this.enrichMemoryDtos(returnedItems),
       total: items.length,
-      matchMode: 'hybrid',
-      requestedMatchMode: 'hybrid',
-      effectiveMatchMode: 'hybrid',
     }
   }
 

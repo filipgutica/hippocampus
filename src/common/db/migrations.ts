@@ -105,15 +105,6 @@ export const migrations: Migration[] = [
       INSERT OR IGNORE INTO memory_runtime_state (singleton, last_auto_archive_sweep_at)
       VALUES (1, NULL);
 
-      CREATE TABLE IF NOT EXISTS memory_embeddings (
-        memory_id TEXT PRIMARY KEY REFERENCES memories(id),
-        model_id TEXT NOT NULL,
-        embedding_json TEXT NOT NULL,
-        source_text_hash TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        model_fingerprint TEXT NOT NULL DEFAULT ''
-      );
-
       CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_live_project_scope_memory_type_subject
         ON memories(user_id, project_id, memory_type, subject_key)
         WHERE status IN ('candidate', 'active') AND project_id IS NOT NULL;
@@ -143,14 +134,6 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_memory_events_scope_created_at
         ON memory_events(scope_type, scope_id, created_at DESC);
 
-      CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model_updated
-        ON memory_embeddings(model_id, updated_at DESC);
-    `,
-  },
-  {
-    version: 2,
-    name: 'memory_fts5_index',
-    up: `
       CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
       USING fts5(
         subject,

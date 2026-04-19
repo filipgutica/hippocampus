@@ -6,7 +6,6 @@ export type AppPaths = {
   home: string
   configFile: string
   dbFile: string
-  transformersCacheDir: string
 }
 
 export const resolveAppPaths = (overrideHome?: string): AppPaths => {
@@ -16,6 +15,5 @@ export const resolveAppPaths = (overrideHome?: string): AppPaths => {
     home,
     configFile: path.join(home, 'config.json'),
     dbFile: path.join(home, 'hippocampus.db'),
-    transformersCacheDir: path.join(home, 'cache', 'transformers'),
   }
 }

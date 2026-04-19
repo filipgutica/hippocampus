@@ -1,5 +1,4 @@
 import type { GetPolicyResult } from './get-policy.dto.js'
-import type { SearchMatchMode } from './search-memories.dto.js'
 import type { ScopeRef, ScopeType } from '../../common/types/scope-ref.js'
 import type { ApplyMemoryDecision, MemoryType } from '../memory.types.js'
 import type { MemoryDto } from './memory.dto.js'
@@ -17,10 +16,6 @@ export type ApplyMemoryResult =
 export type SearchResult = {
   items: MemoryDto[]
   total: number
-  matchMode: SearchMatchMode
-  requestedMatchMode: SearchMatchMode
-  effectiveMatchMode: SearchMatchMode
-  fallbackReason?: string
 }
 
 export type MemoryListResult = {

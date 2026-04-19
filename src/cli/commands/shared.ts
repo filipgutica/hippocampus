@@ -161,17 +161,7 @@ const formatMemoryCollection = (result: SearchResult | MemoryListResult): string
 }
 
 export const formatSearchResult = (result: SearchResult): string => {
-  const header = [
-    `requestedMatchMode: ${result.requestedMatchMode}`,
-    `effectiveMatchMode: ${result.effectiveMatchMode}`,
-  ]
-
-  if (result.fallbackReason) {
-    header.push(`notice: ${result.fallbackReason}`)
-    header.push('guidance: for broader recall, use memory-list (memories list) with scope + type')
-  }
-
-  return [header.join('\n'), '', formatMemoryCollection(result)].join('\n')
+  return formatMemoryCollection(result)
 }
 
 export const formatMemoryListResult = (result: MemoryListResult): string => formatMemoryCollection(result)

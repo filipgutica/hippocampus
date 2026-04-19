@@ -3,12 +3,10 @@ import { InitService, type InitResult } from './init.service.js'
 import { defaultConfig, readConfig } from './config.js'
 import { initializeDatabase } from '../common/db/db.js'
 import { assertRuntimeCompatibility } from './runtime-compatibility.js'
-import { MemoryEmbeddingRepository } from '../memory/memory-embedding.repository.js'
 import { MemoryRepository } from '../memory/memory.repository.js'
 import { MemoryEventRepository } from '../memory/memory-event.repository.js'
 import { MemoryRuntimeStateRepository } from '../memory/memory-runtime-state.repository.js'
 import { MemoryOwnershipRepository } from '../memory/memory-ownership.repository.js'
-import { LocalEmbeddingProvider } from '../memory/local-embedding-provider.js'
 import { MEMORY_POLICY_VERSION } from '../memory/policies/memory.policy.js'
 import { MemoryService } from '../memory/memory.service.js'
 import { createMcpServer } from '../mcp/server.js'
@@ -71,7 +69,6 @@ export const buildApp = async (options: BuildAppOptions): Promise<AppContainer> 
     currentUserId: initResult.config.currentUserId,
     projectRepository,
   })
-  const memoryEmbeddingRepository = new MemoryEmbeddingRepository(db)
   const memoryRepository = new MemoryRepository({
     db,
     ownershipRepository: memoryOwnershipRepository,
@@ -79,10 +76,6 @@ export const buildApp = async (options: BuildAppOptions): Promise<AppContainer> 
   const memoryEventRepository = new MemoryEventRepository(db)
   const memoryRuntimeStateRepository = new MemoryRuntimeStateRepository(db)
   const memoryService = new MemoryService({
-    embeddingProvider: new LocalEmbeddingProvider({
-      cacheDir: paths.transformersCacheDir,
-    }),
-    memoryEmbeddingRepository,
     memoryRepository,
     memoryEventRepository,
     memoryRuntimeStateRepository,

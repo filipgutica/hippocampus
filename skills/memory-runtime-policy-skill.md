@@ -31,8 +31,7 @@ See `hippocampus://skills/memory-scope` for supporting guidance on choosing `use
 - Use `memory-search` for subject-based task retrieval and `memory-list` for orientation, debugging, or broad recall.
 - Normal retrieval only returns memories with `status = active`.
 - In v1, subject matching is exact after normalization, so search with the clearest likely durable subject.
-- `memory-search` uses hybrid retrieval by default and falls back to exact if semantic retrieval is unavailable.
-- If `memory-search` degrades to exact, broaden recall with `memory-list` using `scope + type`.
+- `memory-search` uses exact subject matching plus FTS retrieval.
 - Successful `memory-search` results update retrieval-side salience; `memory-list`, `memory-get`, and history reads do not.
 
 ## Memory Types
@@ -73,7 +72,7 @@ Engram mapping for the mental model:
 ## Retrieval strength
 - `retrievalCount`, `lastRetrievedAt`, and `strength` are operational ranking signals, not evidence.
 - Only successful `memory-search` results update retrieval strength.
-- Retrieval strength decays over time from `lastRetrievedAt` and is used only as a ranking tie-break after exact/semantic relevance.
+- Retrieval strength decays over time from `lastRetrievedAt` and is used only as a ranking tie-break after exact/FTS relevance.
 - Automatic stale archival requires both write-side and retrieval-side staleness.
 - A memory is stale only when `lastReinforcedAt` is beyond the threshold and `lastRetrievedAt` is either missing or beyond the threshold.
 - Default stale thresholds are scope-aware: `user` uses 90 days, `project` uses 365 days.
@@ -111,10 +110,9 @@ Engram mapping for the mental model:
 - If the fact is uncertain or still changing, wait until it stabilizes.
 
 ## Example flows
-- Retrieval flow: Before choosing a package manager command in a project, search project scope for subject `prefer pnpm`. If search degrades to exact and you need broader recall, use `memory-list` with `type = preference`. Only active memories will be returned.
+- Retrieval flow: Before choosing a package manager command in a project, search project scope for subject `prefer pnpm`. If you need broader recall, use `memory-list` with `type = preference`. Only active memories will be returned.
 - Save flow: After confirming a project convention like `This project uses pnpm`, save it in project scope with `origin = tool_observation`.
 - Pattern flow: If the user repeatedly corrects long answers toward shorter ones, save that as `origin = observed_pattern` and expect it to remain `candidate` until reinforced enough to promote.
 - Contradiction flow: If an old memory says `Use pnpm for this project.` but the project has moved to npm, contradict the old memory so it becomes `suppressed` and points to the new active replacement.
 - Skip flow: If you are in the middle of a one-off debugging session, do not save temporary stack traces, branch names, or test-specific notes.
-- Semantic search flow: `memory-search` uses cached `Xenova/bge-small-en-v1.5` artifacts under Hippocampus home and falls back to exact retrieval if semantic loading or download is unavailable.
 - Future note: a larger model may be appropriate for a future cloud/service offering, but that is not part of the local runtime policy today.

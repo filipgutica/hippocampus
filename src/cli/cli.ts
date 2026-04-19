@@ -2,7 +2,6 @@ import yargs from 'yargs'
 import { buildApp, type RuntimeApp } from '../app/build-app.js'
 import type { ScopeRef } from '../common/types/scope-ref.js'
 import type { ApplyObservationInput } from '../memory/dto/apply-observation.dto.js'
-import type { SearchMatchMode } from '../memory/dto/search-memories.dto.js'
 import { MEMORY_ORIGINS, MEMORY_TYPES } from '../memory/memory.types.js'
 import type { MemoryOrigin, MemoryType } from '../memory/memory.types.js'
 import { resolveProjectRepoRoot } from '../projects/project-identity.js'
@@ -56,7 +55,6 @@ type SearchArgs = ScopeArgs &
     type?: MemoryType
     subject?: string
     limit?: number
-    matchMode?: SearchMatchMode
   }
 
 type UninstallArgs = {
@@ -290,7 +288,7 @@ const createParser = (argv: string[], io: CliIO) => {
     })
     .command({
       command: 'search',
-      describe: 'Search active memories within a scope.',
+      describe: 'Search active memories within a scope using exact subject matching plus FTS.',
       builder: parser =>
         parser
           .option('scope-type', {
@@ -310,10 +308,6 @@ const createParser = (argv: string[], io: CliIO) => {
           .option('limit', {
             type: 'number',
           })
-          .option('match-mode', {
-            type: 'string',
-            choices: ['exact', 'hybrid'] as const,
-          })
           .option('json', {
             type: 'boolean',
             default: false,
@@ -329,7 +323,6 @@ const createParser = (argv: string[], io: CliIO) => {
                 type: searchArgs.type ?? null,
                 subject: searchArgs.subject ?? '',
                 limit: searchArgs.limit ?? null,
-                matchMode: searchArgs.matchMode ?? null,
               },
               io,
               searchArgs.json ?? false,

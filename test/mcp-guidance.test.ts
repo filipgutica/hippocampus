@@ -178,6 +178,7 @@ describe('MCP guidance resource', () => {
       const contradictTool = tools.tools.find(item => item.name === 'memory-contradict')
       expect(searchTool?.description).toContain('Default retrieval tool')
       expect(searchTool?.description).toContain('always provide `subject`')
+      expect(searchTool?.description).toContain('exact subject matching plus FTS retrieval')
       expect(getScopeIdDescription(searchTool)).toContain('durable project scope id returned by `project-ensure`')
       expect(policyTool?.description).toContain('Start here once per session')
       expect(policyTool?.description).toContain('resource pointers')
@@ -200,7 +201,6 @@ describe('MCP guidance resource', () => {
         arguments: {
           scope: { type: 'project', id: projectScopeId },
           subject: 'prefer pnpm',
-          matchMode: 'exact',
           limit: 1,
         },
       })

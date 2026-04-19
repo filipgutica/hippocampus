@@ -4,18 +4,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AppError } from '../src/common/errors.js'
 import { initializeDatabase } from '../src/common/db/db.js'
 import type { ScopeRef } from '../src/common/types/scope-ref.js'
-import { MemoryEmbeddingRepository } from '../src/memory/memory-embedding.repository.js'
 import { MemoryEventRepository } from '../src/memory/memory-event.repository.js'
 import { MemoryOwnershipRepository } from '../src/memory/memory-ownership.repository.js'
-import type { EmbeddingProvider } from '../src/memory/local-embedding-provider.js'
 import { MEMORY_POLICY_VERSION } from '../src/memory/policies/memory.policy.js'
 import { MemoryRepository } from '../src/memory/memory.repository.js'
 import { MemoryRuntimeStateRepository } from '../src/memory/memory-runtime-state.repository.js'
 import { MemoryService } from '../src/memory/memory.service.js'
-import { getSemanticSourceText, getSourceTextHash } from '../src/memory/semantic-search.js'
 import { ProjectRepository } from '../src/projects/project.repository.js'
 
 const tempDirs: string[] = []
@@ -55,9 +51,7 @@ afterEach(() => {
   }
 })
 
-const createService = (options?: {
-  embeddingProvider?: EmbeddingProvider
-}) => {
+const createService = () => {
   const dir = createTempDir()
   const dbFile = path.join(dir, 'hippocampus.db')
   const db = initializeDatabase(dbFile)
@@ -73,43 +67,8 @@ const createService = (options?: {
     db,
     ownershipRepository,
   })
-  const embeddingProvider =
-    options?.embeddingProvider ??
-    {
-      getModelId: () => 'Xenova/bge-small-en-v1.5',
-      getCacheDir: () => path.join(dir, 'cache', 'transformers'),
-      getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-      getModelFingerprint: async () => 'default-fingerprint',
-      embed: async (input: string) => {
-        const lower = input.toLowerCase()
-
-        if (lower.includes('package manager')) {
-          return [0.7, 0.7, 0]
-        }
-
-        if (lower.includes('prefer pnpm')) {
-          return [1, 0, 0]
-        }
-
-        if (lower.includes('prefer npm')) {
-          return [0, 1, 0]
-        }
-
-        if (lower.includes('tests') || lower.includes('commit')) {
-          return [0, 1, 0]
-        }
-
-        if (lower.includes('docs')) {
-          return [0, 0.9, 0.1]
-        }
-
-        return [0, 0, 1]
-      },
-    }
 
   const service = new MemoryService({
-    embeddingProvider,
-    memoryEmbeddingRepository: new MemoryEmbeddingRepository(db),
     memoryRepository,
     memoryEventRepository: new MemoryEventRepository(db),
     memoryRuntimeStateRepository,
@@ -142,7 +101,6 @@ const createService = (options?: {
   return {
     db,
     memoryRuntimeStateRepository,
-    embeddingProvider,
     service: {
       ...service,
       ensureProject: service.ensureProject.bind(service),
@@ -499,7 +457,6 @@ describe('MemoryService', () => {
     const search = await service.searchMemories({
       scope,
       subject: 'prefer pnpm',
-      matchMode: 'exact',
       limit: 10,
     })
     const searchedState = getStoredMemoryState(db, created.memory.id)
@@ -630,7 +587,6 @@ describe('MemoryService', () => {
       service.searchMemories({
         scope,
         subject: 'prefer pnpm',
-        matchMode: 'exact',
         limit: 10,
       }),
     ).rejects.toThrow()
@@ -749,7 +705,6 @@ describe('MemoryService', () => {
       await service.searchMemories({
         scope,
         subject: 'prefer pnpm',
-        matchMode: 'exact',
         limit: 1,
       })
     }
@@ -767,283 +722,58 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('uses lastRetrievedAt for lazy decay and retrieval strength as a semantic tie-break', async () => {
+  it('merges exact subject-key matches with FTS candidates and persists retrieval state', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
-    const { db, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => 'semantic-fingerprint',
-        embed: async input => {
-          const lower = input.toLowerCase()
-          if (lower.includes('package manager')) {
-            return [1, 0, 0]
-          }
-
-          if (lower.includes('pnpm') || lower.includes('npm')) {
-            return [1, 0, 0]
-          }
-
-          return [0, 1, 0]
-        },
-      },
-    })
+    const { db, service } = createService()
     const scope = createEnsuredProjectScope(service)
-    const pnpm = service.applyObservation({
+
+    const exact = service.applyObservation({
       scope,
       type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
+      subject: 'quality note',
+      statement: 'Track quality metrics.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
-    const npm = service.applyObservation({
+    const fts = service.applyObservation({
       scope,
-      type: 'preference',
-      subject: 'prefer npm',
-      statement: 'Use npm for this project.',
+      type: 'procedural',
+      subject: 'track metrics',
+      statement: 'The quality note must be reviewed before merges.',
       origin: 'explicit_user_statement',
       source: { channel: 'cli' },
     })
 
-    if (pnpm.decision !== 'create' || !('memory' in pnpm) || npm.decision !== 'create' || !('memory' in npm)) {
+    if (exact.decision !== 'create' || !('memory' in exact) || fts.decision !== 'create' || !('memory' in fts)) {
       throw new Error('Expected memory creation.')
     }
 
-    for (let index = 0; index < 3; index += 1) {
-      await service.searchMemories({
-        scope,
-        subject: 'prefer pnpm',
-        matchMode: 'exact',
-        limit: 1,
-      })
-    }
-
-    vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'))
-    const hybrid = await service.searchMemories({
+    const search = await service.searchMemories({
       scope,
-      subject: 'package manager',
+      subject: 'quality note',
       limit: 10,
     })
 
-    const boosted = getStoredMemoryState(db, pnpm.memory.id)
-    expect(hybrid.items.map(item => item.subject)).toEqual(['prefer pnpm', 'prefer npm'])
-    expect(boosted.retrieval_count).toBe(4)
-    expect(boosted.strength).toBeCloseTo(1.045, 3)
+    const exactState = getStoredMemoryState(db, exact.memory.id)
+    const ftsState = getStoredMemoryState(db, fts.memory.id)
+
+    expect(search.items.map(item => item.subject)).toEqual(['quality note', 'track metrics'])
+    expect(search.total).toBe(2)
+    expect(exactState.retrieval_count).toBe(1)
+    expect(ftsState.retrieval_count).toBe(1)
+    expect(exactState.last_retrieved_at).toBe('2026-01-01T00:00:00.000Z')
+    expect(ftsState.last_retrieved_at).toBe('2026-01-01T00:00:00.000Z')
 
     db.close()
   })
 
-  it('uses hybrid search by default, keeps exact explicit, and refreshes cached embeddings when memory text changes', async () => {
-    const { db, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => 'semantic-fingerprint',
-        embed: async (input: string) => {
-          const lower = input.toLowerCase()
-
-          if (lower.includes('pnpm') || lower.includes('package manager')) {
-            return [1, 0, 0]
-          }
-
-          if (lower.includes('npm')) {
-            return [0.8, 0.2, 0]
-          }
-
-          return [0, 1, 0]
-        },
-      },
-    })
-    const scope = createEnsuredProjectScope(service)
-
-    service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-    service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer npm',
-      statement: 'Use npm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    const hybrid = await service.searchMemories({
-      scope,
-      subject: 'preferred package manager',
-      limit: 10,
-    })
-    const exact = await service.searchMemories({
-      scope,
-      subject: 'prefer pnpm',
-      matchMode: 'exact',
-      limit: 10,
-    })
-
-    const beforeRefresh = db
-      .prepare('SELECT source_text_hash FROM memory_embeddings WHERE memory_id = ?')
-      .get(hybrid.items[0]!.id) as { source_text_hash: string }
-
-    service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm and keep the lockfile committed.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    await service.searchMemories({
-      scope,
-      subject: 'preferred package manager',
-      limit: 10,
-    })
-
-    const afterRefresh = db
-      .prepare('SELECT source_text_hash FROM memory_embeddings WHERE memory_id = ?')
-      .get(hybrid.items[0]!.id) as { source_text_hash: string }
-
-    expect(hybrid.items.map(item => item.subject)).toEqual(['prefer pnpm', 'prefer npm'])
-    expect(hybrid.requestedMatchMode).toBe('hybrid')
-    expect(hybrid.effectiveMatchMode).toBe('hybrid')
-    expect(exact.items.map(item => item.subject)).toEqual(['prefer pnpm'])
-    expect(exact.requestedMatchMode).toBe('exact')
-    expect(exact.effectiveMatchMode).toBe('exact')
-    expect(beforeRefresh.source_text_hash).not.toBe(afterRefresh.source_text_hash)
-
-    db.close()
-  })
-
-  it('falls back to exact search when hybrid retrieval is unavailable', async () => {
-    const { db, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => 'missing-fingerprint',
-        embed: async () => {
-          throw new AppError('SEMANTIC_MODEL_NOT_AVAILABLE', 'Download it from https://huggingface.co/Xenova/bge-small-en-v1.5.')
-        },
-      },
-    })
-    const scope = createEnsuredProjectScope(service)
-
-    service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    const hybrid = await service.searchMemories({
-      scope,
-      subject: 'prefer pnpm',
-      limit: 10,
-    })
-    const explicitHybrid = await service.searchMemories({
-      scope,
-      subject: 'prefer pnpm',
-      matchMode: 'hybrid',
-      limit: 10,
-    })
-    const exact = await service.searchMemories({
-      scope,
-      subject: 'prefer pnpm',
-      matchMode: 'exact',
-      limit: 10,
-    })
-
-    expect(hybrid.items.map(item => item.subject)).toEqual(['prefer pnpm'])
-    expect(hybrid.effectiveMatchMode).toBe('exact')
-    expect(hybrid.fallbackReason).toContain('Semantic retrieval unavailable')
-    expect(explicitHybrid.effectiveMatchMode).toBe('exact')
-    expect(explicitHybrid.fallbackReason).toContain('Download it from https://huggingface.co/Xenova/bge-small-en-v1.5.')
-    expect(exact.effectiveMatchMode).toBe('exact')
-    expect(exact.fallbackReason).toBeUndefined()
-
-    db.close()
-  })
-
-  it('throws when semantic cache data is corrupted instead of silently degrading', async () => {
-    const { db, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => 'semantic-fingerprint',
-        embed: async () => [1, 0, 0],
-      },
-    })
-    const scope = createEnsuredProjectScope(service)
-    const created = service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    if (created.decision !== 'create' || !('memory' in created)) {
-      throw new Error('Expected memory creation.')
-    }
-
-    const memory = created.memory
-    const sourceText = getSemanticSourceText(memory)
-    const sourceTextHash = getSourceTextHash(sourceText)
-
-    db.prepare(
-      [
-        'INSERT INTO memory_embeddings (memory_id, model_id, model_fingerprint, embedding_json, source_text_hash, updated_at)',
-        'VALUES (?, ?, ?, ?, ?, ?)',
-      ].join(' '),
-    ).run(
-      memory.id,
-      'Xenova/bge-small-en-v1.5',
-      'semantic-fingerprint',
-      'not-json',
-      sourceTextHash,
-      new Date().toISOString(),
-    )
-
-    await expect(
-      service.searchMemories({
-        scope,
-        subject: 'preferred package manager',
-        limit: 10,
-      }),
-    ).rejects.toThrow()
-
-    db.close()
-  })
-
-  it('does not auto-archive stale memories when search is invalid before hybrid retrieval starts', async () => {
+  it('does not auto-archive stale memories when search is invalid before FTS retrieval starts', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
 
-    const { db, memoryRuntimeStateRepository, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => 'missing-fingerprint',
-        embed: async () => {
-          throw new Error('Download it from https://huggingface.co/Xenova/bge-small-en-v1.5.')
-        },
-      },
-    })
+    const { db, memoryRuntimeStateRepository, service } = createService()
     const scope = createEnsuredProjectScope(service)
     const created = service.applyObservation({
       scope,
@@ -1077,228 +807,7 @@ describe('MemoryService', () => {
     db.close()
   })
 
-  it('refreshes cached embeddings when only the model fingerprint changes', async () => {
-    let currentFingerprint = 'fingerprint-a'
-    let currentEmbedding = [1, 0, 0]
-
-    const { db, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => currentFingerprint,
-        embed: async input => (input.toLowerCase().includes('package manager') ? [1, 0, 0] : currentEmbedding),
-      },
-    })
-    const scope = createEnsuredProjectScope(service)
-    const created = service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    if (created.decision !== 'create' || !('memory' in created)) {
-      throw new Error('Expected memory creation.')
-    }
-
-    await service.searchMemories({
-      scope,
-      subject: 'package manager',
-      limit: 10,
-    })
-
-    const before = db
-      .prepare('SELECT model_fingerprint, embedding_json FROM memory_embeddings WHERE memory_id = ?')
-      .get(created.memory.id) as { model_fingerprint: string; embedding_json: string }
-
-    currentFingerprint = 'fingerprint-b'
-    currentEmbedding = [0.5, 0.5, 0]
-
-    await service.searchMemories({
-      scope,
-      subject: 'package manager',
-      limit: 10,
-    })
-
-    const after = db
-      .prepare('SELECT model_fingerprint, embedding_json FROM memory_embeddings WHERE memory_id = ?')
-      .get(created.memory.id) as { model_fingerprint: string; embedding_json: string }
-
-    expect(before.model_fingerprint).toBe('fingerprint-a')
-    expect(after.model_fingerprint).toBe('fingerprint-b')
-    expect(before.embedding_json).not.toBe(after.embedding_json)
-
-    db.close()
-  })
-
-  it('eagerly embeds memories after create commits', async () => {
-    const { db, service } = createService()
-    const scope = createEnsuredProjectScope(service)
-
-    const created = service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    if (created.decision !== 'create' || !('memory' in created)) {
-      throw new Error('Expected memory creation.')
-    }
-
-    await flushAsyncWork()
-
-    const stored = db
-      .prepare('SELECT model_id, source_text_hash FROM memory_embeddings WHERE memory_id = ?')
-      .get(created.memory.id) as { model_id: string; source_text_hash: string } | undefined
-
-    expect(stored?.model_id).toBe('Xenova/bge-small-en-v1.5')
-    expect(stored?.source_text_hash).toBe(getSourceTextHash(getSemanticSourceText(created.memory)))
-
-    db.close()
-  })
-
-  it('refreshes eager embeddings after a reinforce changes the text', async () => {
-    const { db, service } = createService()
-    const scope = createEnsuredProjectScope(service)
-
-    const created = service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    if (created.decision !== 'create' || !('memory' in created)) {
-      throw new Error('Expected memory creation.')
-    }
-
-    await flushAsyncWork()
-
-    const reinforced = service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm and keep the lockfile committed.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    if (reinforced.decision !== 'reinforce' || !('memory' in reinforced)) {
-      throw new Error('Expected memory reinforcement.')
-    }
-
-    await flushAsyncWork()
-
-    const stored = db
-      .prepare('SELECT source_text_hash FROM memory_embeddings WHERE memory_id = ?')
-      .get(created.memory.id) as { source_text_hash: string } | undefined
-
-    expect(stored?.source_text_hash).toBe(getSourceTextHash(getSemanticSourceText(reinforced.memory)))
-
-    db.close()
-  })
-
-  it('swallows eager embedding failures after writes commit', async () => {
-    const { db, service } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => {
-          throw new Error('model unavailable')
-        },
-        embed: async () => [0, 0, 1],
-      },
-    })
-    const scope = createEnsuredProjectScope(service)
-
-    const created = service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'prefer pnpm',
-      statement: 'Use pnpm for this project.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    expect(created.decision).toBe('create')
-    await flushAsyncWork()
-
-    db.close()
-  })
-
-  it('falls back to the full scan when FTS is only a partial match, preserving semantic recall', async () => {
-    const { db, service, memoryRepository } = createService({
-      embeddingProvider: {
-        getModelId: () => 'Xenova/bge-small-en-v1.5',
-        getCacheDir: () => '/tmp/fake-cache',
-        getModelSource: () => 'https://huggingface.co/Xenova/bge-small-en-v1.5',
-        getModelFingerprint: async () => 'semantic-fingerprint',
-        embed: async (input: string) => {
-          const lower = input.toLowerCase()
-
-          if (lower === 'quality') {
-            return [1, 0, 0]
-          }
-
-          if (lower.includes('quality note') || lower.includes('track quality metrics')) {
-            return [0, 1, 0]
-          }
-
-          if (lower.includes('run tests before commit')) {
-            return [1, 0, 0]
-          }
-
-          return [0, 0, 1]
-        },
-      },
-    })
-    const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
-    const listSpy = vi.spyOn(memoryRepository, 'list')
-    const scope = createEnsuredProjectScope(service)
-
-    service.applyObservation({
-      scope,
-      type: 'preference',
-      subject: 'quality note',
-      statement: 'Track quality metrics.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-    service.applyObservation({
-      scope,
-      type: 'procedural',
-      subject: 'run tests before commit',
-      statement: 'Run tests before commit.',
-      origin: 'explicit_user_statement',
-      source: { channel: 'cli' },
-    })
-
-    await flushAsyncWork()
-
-    const search = await service.searchMemories({
-      scope,
-      subject: 'quality',
-      limit: 10,
-    })
-
-    expect(listFtsCandidatesSpy).toHaveBeenCalled()
-    expect(listSpy).toHaveBeenCalled()
-    expect(search.total).toBe(1)
-    expect(search.items[0]?.subject).toBe('run tests before commit')
-
-    db.close()
-  })
-
-  it('falls back to the full scan when FTS returns no candidates', async () => {
+  it('returns exact matches when FTS returns no candidates', async () => {
     const { db, service, memoryRepository } = createService()
     const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
     const listSpy = vi.spyOn(memoryRepository, 'list')
@@ -1322,13 +831,13 @@ describe('MemoryService', () => {
     })
 
     expect(listFtsCandidatesSpy).toHaveBeenCalled()
-    expect(listSpy).toHaveBeenCalled()
+    expect(listSpy).not.toHaveBeenCalled()
     expect(search.total).toBe(0)
 
     db.close()
   })
 
-  it('falls back to the full scan when FTS query parsing fails', async () => {
+  it('returns exact matches when FTS query parsing fails', async () => {
     const { db, service, memoryRepository } = createService()
     const listFtsCandidatesSpy = vi.spyOn(memoryRepository, 'listFtsCandidates')
     const listSpy = vi.spyOn(memoryRepository, 'list')
@@ -1352,8 +861,36 @@ describe('MemoryService', () => {
     })
 
     expect(listFtsCandidatesSpy).toHaveBeenCalled()
-    expect(listSpy).toHaveBeenCalled()
+    expect(listSpy).not.toHaveBeenCalled()
     expect(search.total).toBe(0)
+
+    db.close()
+  })
+
+  it('rethrows non-FTS repository errors during search', async () => {
+    const { db, service, memoryRepository } = createService()
+    const scope = createEnsuredProjectScope(service)
+
+    service.applyObservation({
+      scope,
+      type: 'preference',
+      subject: 'prefer pnpm',
+      statement: 'Use pnpm for this project.',
+      origin: 'explicit_user_statement',
+      source: { channel: 'cli' },
+    })
+
+    vi.spyOn(memoryRepository, 'listFtsCandidates').mockImplementation(() => {
+      throw new Error('database unavailable')
+    })
+
+    await expect(
+      service.searchMemories({
+        scope,
+        subject: 'prefer pnpm',
+        limit: 10,
+      }),
+    ).rejects.toThrow('database unavailable')
 
     db.close()
   })
@@ -1419,7 +956,6 @@ describe('MemoryService', () => {
     const search = await service.searchMemories({
       scope,
       subject: 'prefer pnpm',
-      matchMode: 'exact',
       limit: 10,
     })
 
@@ -1758,7 +1294,6 @@ describe('MemoryService', () => {
     const duringCooldown = await service.searchMemories({
       scope,
       subject: 'keep commits focused',
-      matchMode: 'exact',
       limit: 10,
     })
     expect(duringCooldown.total).toBe(1)
@@ -1776,7 +1311,6 @@ describe('MemoryService', () => {
     const afterCooldown = await service.searchMemories({
       scope,
       subject: 'keep commits focused',
-      matchMode: 'exact',
       limit: 10,
     })
     expect(afterCooldown.total).toBe(0)

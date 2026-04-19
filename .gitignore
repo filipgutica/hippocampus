@@ -1,7 +1,8 @@
-dist
-node_modules
+.notes/.runtime/
+node_modules/
+dist/
+.claude/
 .DS_Store
-.claude
 *.db
 *.sqlite
 *.sqlite-journal

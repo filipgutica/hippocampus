@@ -175,6 +175,7 @@ describe('MCP memory management tools', () => {
       expect(contradictTool).toBeDefined()
       expect(projectEnsureTool).toBeDefined()
       expect(searchTool?.description).toContain('always provide `subject`')
+      expect(searchTool?.description).toContain('exact subject matching plus FTS retrieval')
       expect(listTool?.description).toContain('broad recall by memory class')
       expect(listTool?.description).toContain('scope-plus-type browsing')
       expect(getTool?.description).toContain('including non-active memories')
@@ -311,7 +312,6 @@ describe('MCP memory management tools', () => {
         arguments: {
           scope: { type: 'project', id: projectScopeId },
           subject: 'prefer pnpm',
-          matchMode: 'exact',
           limit: 10,
         },
       })
@@ -322,7 +322,6 @@ describe('MCP memory management tools', () => {
         arguments: {
           scope: { type: 'project', id: projectScopeId },
           subject: 'prefer npm',
-          matchMode: 'exact',
           limit: 10,
         },
       })
